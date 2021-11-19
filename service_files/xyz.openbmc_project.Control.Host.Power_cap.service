@@ -1,0 +1,16 @@
+[Unit]
+Description=Power Capping
+After=xyz.openbmc_project.Settings.service
+
+[Service]
+ExecStartPre=busctl set-property xyz.openbmc_project.Settings                                                                                            /xyz/openbmc_project/control/host0/power_cap xyz.openbmc_project.Control.Power.Cap                                                                   PowerCapEnable b true
+
+ExecStart=/usr/bin/power-capping
+Restart=always
+RestartSec=3
+SyslogIdentifier=power-capping
+Type=simple
+
+[Install]
+WantedBy=multi-user.target
+
