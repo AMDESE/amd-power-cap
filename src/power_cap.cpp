@@ -17,6 +17,8 @@ extern "C" {
 
 #define COMMAND_BOARD_ID    ("/sbin/fw_printenv -n board_id")
 #define COMMAND_LEN 		3
+#define SMU_INIT_WAIT       180
+
 
 constexpr auto POWER_SERVICE = "xyz.openbmc_project.Settings";
 std::string POWER_PATH ="/xyz/openbmc_project/control/host0/power_cap";
@@ -168,7 +170,7 @@ void PowerCap::apply_power_capping()
 	if(PowerCapEnableData == true)
 	{
 		get_power_cap_data();
-		sleep(120);
+		sleep(SMU_INIT_WAIT);
 		do_power_capping();		
 	}
 
