@@ -28,6 +28,7 @@ class PowerCapDataHolder
             instance = new PowerCapDataHolder;
         return instance;
     }
+
     const static constexpr char *PropertiesIntf =
         "org.freedesktop.DBus.Properties";
     const static constexpr char *HostStatePathPrefix =
@@ -50,8 +51,6 @@ struct PowerCap
     PowerCapDataHolder *powercapDataHolderObj =
         powercapDataHolderObj->getInstance();
 
-	uint32_t power = 0;
-
     PowerCap(sdbusplus::bus::bus &bus, const char *path, EventPtr &event) :
         bus(bus),
         propertiesChangedPowerCapValue(
@@ -60,7 +59,7 @@ struct PowerCap
                 sdbusplus::bus::match::rules::member("PropertiesChanged") +
                 sdbusplus::bus::match::rules::path(
                    "/xyz/openbmc_project/control/host0/power_cap") +
-				sdbusplus::bus::match::rules::argN(0, "xyz.openbmc_project.Control.Power.Cap") +
+                sdbusplus::bus::match::rules::argN(0, "xyz.openbmc_project.Control.Power.Cap") +
                 sdbusplus::bus::match::rules::interface(
                     powercapDataHolderObj->PropertiesIntf),
             [this](sdbusplus::message::message &msg) {
@@ -69,18 +68,13 @@ struct PowerCap
                 msg.read(objectName, msgData);
                 // Check if it was the PowerCap property that changed.
                 auto valPropMap = msgData.find("PowerCap");
-				if (valPropMap != msgData.end())
+                if (valPropMap != msgData.end())
                 {
                     phosphor::logging::log<phosphor::logging::level::INFO>(
                     "PowerCap property changed");
 
-                    PowerCapData = std::get<uint32_t>(valPropMap->second);
-                    	do_power_capping();
-                }
-				else 
-                {
-                    phosphor::logging::log<phosphor::logging::level::INFO>(
-                    "PowerCap property not changed");
+                    userPCapLimit = std::get<uint32_t>(valPropMap->second);
+                    do_power_capping();
                 }
             }),
         propertiesChangedSignalCurrentHostState(
@@ -95,10 +89,9 @@ struct PowerCap
                 std::string objectName;
                 std::map<std::string, std::variant<std::string>> msgData;
                 msg.read(objectName, msgData);
-                // Check if it was the Value property that changed.
+                // Check if CPU was powered-on
                 auto valPropMap = msgData.find("CurrentHostState");
                 {
-					uint32_t power_cap_data = 0;
                     if (valPropMap != msgData.end())
                     {
                         StateServer::Host::HostState currentHostState =
@@ -106,14 +99,15 @@ struct PowerCap
                                 std::get<std::string>(valPropMap->second));
                         if (currentHostState != StateServer::Host::HostState::Off)
                         {
-							apply_power_capping();
-                    	}
-                	}
-            	}
-		})
+                            onHostPwrChange();
+                        }
+                    }
+                }
+        })
     {
         phosphor::logging::log<phosphor::logging::level::INFO>(
             "PowerCap is created");
+        init_power_capping();     // init from BMC stored settings
     }
     ~PowerCap()
     {
@@ -124,17 +118,27 @@ struct PowerCap
     sdbusplus::bus::bus &bus;
     sdbusplus::bus::match_t propertiesChangedPowerCapValue;
     sdbusplus::bus::match_t propertiesChangedSignalCurrentHostState;
-	bool do_power_capping();
-	void apply_power_capping();
+    std::string BoardName;
+    unsigned int userPCapLimit;     // user requested limit
+    int AppliedPowerCapData;        // actual limit accepted by CPU
+    bool PowerCapEnableData;        // is feature enabled
+
+    //power cap functions
+    bool get_power_cap_enabled_setting();
+    void get_power_cap_limit();
+    void set_power_cap_limit(uint32_t pwr_limit);
+    void init_power_capping();
+    bool do_power_capping();
+    void onHostPwrChange();
+
+    // oob-lib functions
     bool  getPlatformID();
-	uint32_t PowerCapData;
-	bool PowerCapEnableData;
-	void get_power_cap_enable_data();
-	void get_power_cap_data();
-	std::string BoardName;
-	template <typename T>
-	T getProperty(sdbusplus::bus::bus& bus, const char* service, const char* path,
+    uint32_t set_oob_pwr_limit(uint32_t bus, uint32_t addr, uint32_t req_pwr_limit);
+
+    // d-bus functions
+    template <typename T>
+    T getProperty(sdbusplus::bus::bus& bus, const char* service, const char* path,
               const char* interface, const char* propertyName);
-	std::string getService(sdbusplus::bus::bus& bus, const char* path,
-                       const char* interface);
+    std::string getService(sdbusplus::bus::bus& bus, const char* path,
+              const char* interface);
 };

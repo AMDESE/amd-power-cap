@@ -16,9 +16,14 @@ extern "C" {
 }
 
 #define COMMAND_BOARD_ID    ("/sbin/fw_printenv -n board_id")
-#define COMMAND_LEN 		3
+#define COMMAND_LEN         3
 #define SMU_INIT_WAIT       180
-
+#define MAX_RETRY           10
+#define APML_I2C_BUS_P0     (2)
+#define P0_SLV_ADDR         (60)
+#define APML_I2C_BUS_P1     (3)
+#define P1_SLV_ADDR         (56)
+#define CPU_MAX_PWR_LIMIT   (1000) //1000 watts, max perf
 
 constexpr auto POWER_SERVICE = "xyz.openbmc_project.Settings";
 std::string POWER_PATH ="/xyz/openbmc_project/control/host0/power_cap";
@@ -31,78 +36,102 @@ constexpr auto MAPPER_INTERFACE = "xyz.openbmc_project.ObjectMapper";
 
 PowerCapDataHolder* PowerCapDataHolder::instance = 0;
 
+// Set power limit to CPU using OOB library
+uint32_t PowerCap::set_oob_pwr_limit (uint32_t bus, uint32_t addr, uint32_t req_pwr_limit)
+{
+    oob_status_t ret;
+    uint32_t current_pwr_limit;
+
+    ret = read_socket_power_limit(bus, addr, &current_pwr_limit);
+    if((ret == OOB_SUCCESS) && (current_pwr_limit != 0))
+    {
+        phosphor::logging::log<phosphor::logging::level::INFO>(
+            "Initial Power Cap Value ",phosphor::logging::entry(
+            "Initial Power Cap Value %d",current_pwr_limit));
+    }
+    else
+    {
+        phosphor::logging::log<phosphor::logging::level::INFO>(
+            "unable to read power limit");
+        return -1;
+    }
+
+    /* CPU is already running at requested limit
+     * OOB deals in milliwatts only */
+    if ((current_pwr_limit/1000) == req_pwr_limit)
+    {
+        phosphor::logging::log<phosphor::logging::level::INFO>(
+            "CPU already operating at requested power limit");
+        return req_pwr_limit;
+    }
+
+    // Set user supplied limit to CPU (in milliwatts)
+    ret = write_socket_power_limit(bus, addr, (req_pwr_limit * 1000));
+    if (ret != OOB_SUCCESS)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>("Setting power cap value failed");
+        return -1;
+    }
+
+    // Readback and confirm the max limit accepted by CPU
+    // if CPU doesnt support user limit, it returns its default power limit
+    ret = read_socket_power_limit(bus, addr, &current_pwr_limit);
+    if((ret == OOB_SUCCESS) && (current_pwr_limit != 0))
+    {
+        phosphor::logging::log<phosphor::logging::level::INFO>(
+            "Updated Power Cap Value ",phosphor::logging::entry(
+            "Updated Power Cap Value %d",current_pwr_limit));
+        return (current_pwr_limit/1000);
+    }
+    else
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>("Readback power cap value failed");
+        return -1;
+    }
+
+    return -1;
+}
+
+// read stored settings, user requested limit and apply power cap
 bool PowerCap::do_power_capping() {
 
-    oob_status_t ret;
-    uint32_t p0_read_power = 0;
-	uint32_t p1_read_power = 0;
-    uint32_t p0_i2c_bus = 2;
-    uint32_t p0_i2c_addr = 60;
-    uint32_t p1_i2c_bus = 3;
-    uint32_t p1_i2c_addr = 56;
-    uint32_t board_id;	
-	uint32_t pow;	
-	phosphor::logging::log<phosphor::logging::level::INFO>(
-                    "Applying power cap value ");
+    int ret = -1;
 
-	if(PowerCap::getPlatformID() == false)
-	{
-		phosphor::logging::log<phosphor::logging::level::INFO>(
-			"Couldnt find the board id of the platform");
-		return false;
-	}
-	pow = PowerCapData * 1000;
-
-	//PO Power Cap Value Update
-    ret = read_socket_power_limit(p0_i2c_bus, p0_i2c_addr, &p0_read_power);
-	if(ret == OOB_SUCCESS)
-	 {
-		phosphor::logging::log<phosphor::logging::level::INFO>(
-			"Initial Power Cap Value P0 ",phosphor::logging::entry(
-			"Initial Power Cap Value P0 %d",p0_read_power));
-	}
-
-    ret = write_socket_power_limit(p0_i2c_bus, p0_i2c_addr, pow);
-    if (ret != OOB_SUCCESS) 
-	{
-        phosphor::logging::log<phosphor::logging::level::ERR>("Setting power cap value to P0 failed");
-		return false;
+    if((PowerCap::getPlatformID() == false) || 
+       ((userPCapLimit == 0) && (AppliedPowerCapData == 0))) /* factory defaults */
+    {
+        userPCapLimit = CPU_MAX_PWR_LIMIT; // Don't limit, max performance
     }
 
-    ret = read_socket_power_limit(p0_i2c_bus, p0_i2c_addr, &p0_read_power);
-    if(ret == OOB_SUCCESS) 
-	{
-        phosphor::logging::log<phosphor::logging::level::INFO>(
-            "Updated Power Cap Value P0 ",phosphor::logging::entry(
-            "Updated Power Cap Value P0 %d",p0_read_power));
+    /* Do nothing, if new limit is same as old */
+    if (AppliedPowerCapData == userPCapLimit)
+        return true;
+
+    //P0 Power Cap Value Update
+    ret = PowerCap::set_oob_pwr_limit(APML_I2C_BUS_P0, P0_SLV_ADDR, userPCapLimit);
+
+    if ((ret != -1) &&         /* socket P0 set was successful */
+        ((PowerCap::BoardName.compare("Quartz") == 0) ||
+         (PowerCap::BoardName.compare("Titanite") == 0))
+       )
+    {
+        //P1 Power Cap Value Update
+        ret = PowerCap::set_oob_pwr_limit(APML_I2C_BUS_P1, P1_SLV_ADDR, userPCapLimit);
     }
 
-	if(PowerCap::BoardName.compare("Quartz") == 0 )
-	{
-		//P1 Power Cap Value Update
-    	ret = read_socket_power_limit(p1_i2c_bus, p1_i2c_addr, &p1_read_power);
-    	if(ret == OOB_SUCCESS)
-	 	{
-        	phosphor::logging::log<phosphor::logging::level::INFO>(
-            	"Initial Power Cap Value P1 ",phosphor::logging::entry(
-            	"Initial Power Cap Value P1 %d",p1_read_power));
-    	}
-    	ret = write_socket_power_limit(p1_i2c_bus, p1_i2c_addr, pow);
-    	if (ret != OOB_SUCCESS) 
-		{
-        	phosphor::logging::log<phosphor::logging::level::ERR>("Setting power cap value to P1 failed");
-			return false;
-    	}
+    // update d-bus property if CPU applied a different limit
+    // Assume we have a 240W CPU part, but user requests 320W
+    // CPU will report 240W since it is the max.
+    //
+    // We assume both sockets have same OPN
+    // TBD: check if 2P config supports different OPNs
+    if ((ret > 0) && (ret != userPCapLimit))
+        PowerCap::set_power_cap_limit(ret);
 
-    	ret = read_socket_power_limit(p1_i2c_bus, p1_i2c_addr, &p1_read_power);
-    	if(ret == OOB_SUCCESS) 
-		{
-        	phosphor::logging::log<phosphor::logging::level::INFO>(
-            	"Updated Power Cap Value P1 ",phosphor::logging::entry(
-            	"Updated Power Cap Value P1 %d",p1_read_power));
-		}
-	}
-	return true;
+    if (ret > 0)
+        return true;
+    else
+        return false;
 }
 
 bool PowerCap::getPlatformID()
@@ -134,13 +163,13 @@ bool PowerCap::getPlatformID()
         std::cerr << " Error: Failed to close command stream\n";
         return false;
     }
-	std::string board_id(data);
-	if((board_id.compare("3D") == 0) || (board_id.compare("40") == 0) || (board_id.compare("41") == 0)
-		|| (board_id.compare("42") == 0) || (board_id.compare("52") == 0))
-	{
-		PowerCap::BoardName = "Onyx";
-		return true;	
-	}
+    std::string board_id(data);
+    if((board_id.compare("3D") == 0) || (board_id.compare("40") == 0) || (board_id.compare("41") == 0)
+        || (board_id.compare("42") == 0) || (board_id.compare("52") == 0))
+    {
+        PowerCap::BoardName = "Onyx";
+        return true;
+    }
     if((board_id.compare("3E") == 0 ) || (board_id.compare("43") == 0) || (board_id.compare("44") ==0)
         || (board_id.compare("45") == 0) || (board_id.compare("51") == 0))
     {
@@ -158,37 +187,92 @@ bool PowerCap::getPlatformID()
         PowerCap::BoardName = "Titanite";
         return true;
     }
-	
+
     return false;
 }
 
-void PowerCap::apply_power_capping()
+// CPU loses the power limit applied after reboot
+// re-apply previous value from BMC NV
+void PowerCap::onHostPwrChange()
 {
-	std::cout <<"Applying power cap value after AC cycle " << std::endl;
-	get_power_cap_enable_data();
+    uint32_t retry = 0;
+    bool status = false;
 
-	if(PowerCapEnableData == true)
-	{
-		get_power_cap_data();
-		sleep(SMU_INIT_WAIT);
-		do_power_capping();		
-	}
+    status = get_power_cap_enabled_setting();
+
+    if(status && PowerCapEnableData == true)
+    {
+        get_power_cap_limit();
+
+        // loop until SMU firmware initalizes
+        while((do_power_capping() == false) && (retry < MAX_RETRY))
+        {
+            sleep(30);
+            phosphor::logging::log<phosphor::logging::level::ERR>
+                 ("SMU not initialized, retrying...");
+            retry++;
+        }
+    }
+    else
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>("Power cap not enabled");
+    }
 
 }
-
-void PowerCap::get_power_cap_data() 
+void PowerCap::init_power_capping()
 {
-	std::string settingManager = getService(bus, POWER_PATH.c_str() , POWER_INTERFACE);
+    uint32_t retry = 0;
+    bool status = false;
 
-    PowerCapData = getProperty<uint32_t>(bus, settingManager.c_str(), POWER_PATH.c_str(),
+    status = get_power_cap_enabled_setting();
+
+    while((status == false) || (retry < MAX_RETRY))
+    {
+        sleep(10); //retry in 10s interval till phosphor-settings service loads
+        status = get_power_cap_enabled_setting();
+        retry++;
+    }
+
+    if(status)
+    {
+        PowerCap::get_power_cap_limit();
+
+        // if host is off when BMC booted, this will do nothing
+        // power cap settings will be applied when host power state changes
+        PowerCap::do_power_capping();
+    }
+    else if(retry >= MAX_RETRY)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>("Power cap settings not found");
+        exit -1;
+    }
+}
+
+void PowerCap::get_power_cap_limit()
+{
+    std::string settingManager = getService(bus, POWER_PATH.c_str() , POWER_INTERFACE);
+
+    AppliedPowerCapData = getProperty<uint32_t>(bus, settingManager.c_str(),
+                                           POWER_PATH.c_str(),
                                            POWER_INTERFACE, POWER_CAP_STR) ;
 }
 
-void PowerCap::get_power_cap_enable_data()
+bool PowerCap::get_power_cap_enabled_setting()
 {
-	std::string settingManager = getService(bus, POWER_PATH.c_str() , POWER_INTERFACE);
-    PowerCapEnableData = getProperty<bool>(bus, settingManager.c_str(), POWER_PATH.c_str(),
+    try
+    {
+        std::string settingManager = getService(bus, POWER_PATH.c_str() , POWER_INTERFACE);
+    if (settingManager.empty())
+            return false;
+
+        PowerCapEnableData = getProperty<bool>(bus, settingManager.c_str(), POWER_PATH.c_str(),
                                            POWER_INTERFACE, POWER_CAP_ENABLE_STR) ;
+    }
+    catch (const sdbusplus::exception::SdBusError& ex)
+    {
+        phosphor::logging::log<phosphor::logging::level::ERR>("sdbus error");
+    }
+    return true;
 }
 
 template <typename T>
@@ -198,7 +282,7 @@ T PowerCap::getProperty(sdbusplus::bus::bus& bus, const char* service, const cha
     auto method = bus.new_method_call(service, path,
                                       "org.freedesktop.DBus.Properties", "Get");
     method.append(interface, propertyName);
-	std::variant<T> value{};
+    std::variant<T> value{};
     try
     {
         auto reply = bus.call(method);
@@ -207,7 +291,7 @@ T PowerCap::getProperty(sdbusplus::bus::bus& bus, const char* service, const cha
     }
     catch (const sdbusplus::exception::SdBusError& ex)
     {
-      	phosphor::logging::log<phosphor::logging::level::ERR>("GetProperty call failed");
+        phosphor::logging::log<phosphor::logging::level::ERR>("GetProperty call failed");
     }
 }
 
@@ -227,7 +311,7 @@ std::string PowerCap::getService(sdbusplus::bus::bus& bus, const char* path,
         mapperResponseMsg.read(mapperResponse);
         if (mapperResponse.empty())
         {
-			phosphor::logging::log<phosphor::logging::level::ERR>("Error reading mapper response");
+            phosphor::logging::log<phosphor::logging::level::ERR>("Error reading mapper response");
         }
         if (mapperResponse.size() < 1)
         {
@@ -237,7 +321,29 @@ std::string PowerCap::getService(sdbusplus::bus::bus& bus, const char* path,
     }
     catch (const sdbusplus::exception::SdBusError& ex)
     {
-		phosphor::logging::log<phosphor::logging::level::ERR>("Mapper call failed");
+        phosphor::logging::log<phosphor::logging::level::ERR>("Mapper call failed");
     }
+    return "";
 }
 
+void PowerCap::set_power_cap_limit(uint32_t value)
+{
+    sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
+    boost::system::error_code ec;
+    boost::asio::io_context io;
+    auto conn = std::make_shared<sdbusplus::asio::connection>(io);
+
+    conn->async_method_call(
+        [this](boost::system::error_code ec) {
+            if (ec)
+            {
+                phosphor::logging::log<phosphor::logging::level::ERR>
+                    ("Failed to set power cap value in dbus interface");
+            }
+        },
+        "xyz.openbmc_project.Settings",
+        "/xyz/openbmc_project/control/host0/power_cap",
+        "org.freedesktop.DBus.Properties", "Set",
+        "xyz.openbmc_project.Control.Power.Cap", "PowerCap",
+        std::variant<uint32_t>(value));
+}
