@@ -6,8 +6,11 @@
 #include <boost/asio/error.hpp>
 #include <sdbusplus/asio/connection.hpp>
 #include <sdbusplus/asio/property.hpp>
+#include <gpiod.hpp>
+
 
 extern "C" {
+#include <unistd.h>
 #include "linux/i2c-dev.h"
 #include "i2c/smbus.h"
 #include "esmi_common.h"
@@ -19,12 +22,18 @@ extern "C" {
 #define COMMAND_LEN         3
 #define SMU_INIT_WAIT       180
 #define MAX_RETRY           10
-#define APML_I2C_BUS_P0     (2)
-#define P0_SLV_ADDR         (60)
-#define APML_I2C_BUS_P1     (3)
-#define P1_SLV_ADDR         (56)
 #define CPU_MAX_PWR_LIMIT   (1000) //1000 watts, max perf
 
+/* Definition for APML Mux setting */
+#define MAX_APML_BUS    0x02
+#define IMX3112_MUX     0x70
+#define IMX3112_MR46    0x46
+#define IMX3112_MR40    0x40  // MUX port sel
+#define IMX3112_MR41    0x41  // MUX port rw enable
+#define CMD_BUFF_LEN    256
+#define MAX_RETRY       0x10
+
+const std::string PwrOkName = "MON_POST_COMPLETE";
 constexpr auto POWER_SERVICE = "xyz.openbmc_project.Settings";
 std::string POWER_PATH ="/xyz/openbmc_project/control/host0/power_cap";
 constexpr auto POWER_INTERFACE = "xyz.openbmc_project.Control.Power.Cap";
@@ -36,13 +45,16 @@ constexpr auto MAPPER_INTERFACE = "xyz.openbmc_project.ObjectMapper";
 
 PowerCapDataHolder* PowerCapDataHolder::instance = 0;
 
+struct i2c_info p0_info = {2, 60, 0};
+struct i2c_info p1_info = {3, 56, 0};
+
 // Set power limit to CPU using OOB library
-uint32_t PowerCap::set_oob_pwr_limit (uint32_t bus, uint32_t addr, uint32_t req_pwr_limit)
+uint32_t PowerCap::set_oob_pwr_limit (struct i2c_info bus, uint32_t req_pwr_limit)
 {
     oob_status_t ret;
     uint32_t current_pwr_limit;
 
-    ret = read_socket_power_limit(bus, addr, &current_pwr_limit);
+    ret = read_socket_power_limit(bus, &current_pwr_limit);
     if((ret == OOB_SUCCESS) && (current_pwr_limit != 0))
     {
         phosphor::logging::log<phosphor::logging::level::INFO>(
@@ -66,7 +78,7 @@ uint32_t PowerCap::set_oob_pwr_limit (uint32_t bus, uint32_t addr, uint32_t req_
     }
 
     // Set user supplied limit to CPU (in milliwatts)
-    ret = write_socket_power_limit(bus, addr, (req_pwr_limit * 1000));
+    ret = write_socket_power_limit(bus, (req_pwr_limit * 1000));
     if (ret != OOB_SUCCESS)
     {
         phosphor::logging::log<phosphor::logging::level::ERR>("Setting power cap value failed");
@@ -75,7 +87,7 @@ uint32_t PowerCap::set_oob_pwr_limit (uint32_t bus, uint32_t addr, uint32_t req_
 
     // Readback and confirm the max limit accepted by CPU
     // if CPU doesnt support user limit, it returns its default power limit
-    ret = read_socket_power_limit(bus, addr, &current_pwr_limit);
+    ret = read_socket_power_limit(bus, &current_pwr_limit);
     if((ret == OOB_SUCCESS) && (current_pwr_limit != 0))
     {
         phosphor::logging::log<phosphor::logging::level::INFO>(
@@ -97,7 +109,7 @@ bool PowerCap::do_power_capping() {
 
     int ret = -1;
 
-    if((PowerCap::getPlatformID() == false) || 
+    if((PowerCap::getPlatformID() == false) ||
        ((userPCapLimit == 0) && (AppliedPowerCapData == 0))) /* factory defaults */
     {
         userPCapLimit = CPU_MAX_PWR_LIMIT; // Don't limit, max performance
@@ -108,7 +120,7 @@ bool PowerCap::do_power_capping() {
         return true;
 
     //P0 Power Cap Value Update
-    ret = PowerCap::set_oob_pwr_limit(APML_I2C_BUS_P0, P0_SLV_ADDR, userPCapLimit);
+    ret = PowerCap::set_oob_pwr_limit(p0_info, userPCapLimit);
 
     if ((ret != -1) &&         /* socket P0 set was successful */
         ((PowerCap::BoardName.compare("Quartz") == 0) ||
@@ -116,7 +128,7 @@ bool PowerCap::do_power_capping() {
        )
     {
         //P1 Power Cap Value Update
-        ret = PowerCap::set_oob_pwr_limit(APML_I2C_BUS_P1, P1_SLV_ADDR, userPCapLimit);
+        ret = PowerCap::set_oob_pwr_limit(p1_info, userPCapLimit);
     }
 
     // update d-bus property if CPU applied a different limit
@@ -189,6 +201,103 @@ bool PowerCap::getPlatformID()
     }
 
     return false;
+}
+
+int  PowerCap::getGPIOValue(const std::string& name)
+{
+    int value;
+    gpiod::line gpioLine;
+
+    // Find the GPIO line
+    gpioLine = gpiod::find_line(name);
+    if (!gpioLine)
+    {
+        std::cerr << "Can't find line: %s" << name.c_str() << std::endl;
+        return -1;
+    }
+    try
+    {
+        gpioLine.request({__FUNCTION__, gpiod::line_request::DIRECTION_INPUT});
+    }
+    catch (std::system_error& exc)
+    {
+        std::cerr << "Error setting gpio as Input:: %s" << name.c_str() << std::endl;
+        return -1;
+    }
+
+    try
+    {
+        value = gpioLine.get_value();
+    }
+    catch (std::system_error& exc)
+    {
+        std::cerr << "Error getting gpio value for: %s" << name.c_str() << std::endl;
+        return -1;
+    }
+
+    return value;
+}
+
+void PowerCap::enableAPMLMuxChannel()
+{
+    char cmd[CMD_BUFF_LEN];
+    int apml_bus[MAX_APML_BUS] = {
+            2,
+            3
+    };
+    int num_of_apml_bus = MAX_APML_BUS;
+    int retry = 0;
+    bool enableAPMLMux = false;
+
+
+    /* Code for APML bus Mux settings */
+    if ( (strcmp(PowerCap::BoardName.c_str(), "Onyx") == 0) ||
+         (strcmp(PowerCap::BoardName.c_str(), "Ruby") == 0) )
+    {
+        num_of_apml_bus = 1;
+    }
+    else
+    {
+        num_of_apml_bus = MAX_APML_BUS;
+    }
+
+    while (retry < MAX_RETRY)
+    {
+
+        sleep(10);
+        if (getGPIOValue(PwrOkName) > 0)
+        {
+            std::cerr <<"POST Complete reached - Enable APML Mux" << std::endl;
+            enableAPMLMux = true;
+            break;
+        }
+
+
+        retry++;
+    }
+
+    if (enableAPMLMux == true)
+    {
+        for  ( int i = 0; i < num_of_apml_bus; i++)
+        {
+            sleep(10);
+            sprintf(cmd, "i2cset -f -y %d 0x%02x 0x%02x 0x01 >& /dev/null\n", apml_bus[i], IMX3112_MUX, IMX3112_MR46);
+            if (system(cmd) != 0)
+                std::cerr <<"Failed to set APML MUX on bus " << apml_bus[i] << " reg " << IMX3112_MR46 << " OR no CPU installed" << std::endl;
+
+            sleep(10);
+            sprintf(cmd, "i2cset -f -y %d 0x%02x 0x%02x 0x40 >& /dev/null\n", apml_bus, IMX3112_MUX, IMX3112_MR40);
+            if (system(cmd) != 0)
+                std::cerr <<"Failed to set APML MUX on bus " << apml_bus[i] << " reg " << IMX3112_MR40 << " OR no CPU installed" << std::endl;
+
+            sleep(10);
+            sprintf(cmd, "i2cset -f -y %d 0x%02x 0x%02x 0x40 >& /dev/null\n", apml_bus, IMX3112_MUX, IMX3112_MR41);
+            if (system(cmd) != 0)
+                std::cout <<"Failed to set APML MUX on bus " << apml_bus[i] << " reg " << IMX3112_MR41<< " OR no CPU installed" << std::endl;
+        }
+    }
+
+    return;
 }
 
 // CPU loses the power limit applied after reboot

@@ -74,7 +74,7 @@ struct PowerCap
                     "PowerCap property changed");
 
                     userPCapLimit = std::get<uint32_t>(valPropMap->second);
-                    do_power_capping();
+                    //do_power_capping();
                 }
             }),
         propertiesChangedSignalCurrentHostState(
@@ -99,7 +99,9 @@ struct PowerCap
                                 std::get<std::string>(valPropMap->second));
                         if (currentHostState != StateServer::Host::HostState::Off)
                         {
-                            onHostPwrChange();
+
+                            enableAPMLMuxChannel();
+                            //onHostPwrChange();
                         }
                     }
                 }
@@ -107,7 +109,7 @@ struct PowerCap
     {
         phosphor::logging::log<phosphor::logging::level::INFO>(
             "PowerCap is created");
-        init_power_capping();     // init from BMC stored settings
+        //init_power_capping();     // init from BMC stored settings
     }
     ~PowerCap()
     {
@@ -130,10 +132,12 @@ struct PowerCap
     void init_power_capping();
     bool do_power_capping();
     void onHostPwrChange();
+    int  getGPIOValue(const std::string& name);
+    void enableAPMLMuxChannel();
 
     // oob-lib functions
     bool  getPlatformID();
-    uint32_t set_oob_pwr_limit(uint32_t bus, uint32_t addr, uint32_t req_pwr_limit);
+    uint32_t set_oob_pwr_limit(struct i2c_info bus, uint32_t req_pwr_limit);
 
     // d-bus functions
     template <typename T>
