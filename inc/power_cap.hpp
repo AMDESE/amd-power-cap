@@ -100,7 +100,7 @@ struct PowerCap
                         if (currentHostState != StateServer::Host::HostState::Off)
                         {
 
-							enableAPMLMuxChannel();
+                            enableAPMLMuxChannel();
                             //onHostPwrChange();
                         }
                     }
