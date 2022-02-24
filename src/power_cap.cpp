@@ -276,26 +276,13 @@ void PowerCap::enableAPMLMuxChannel()
         retry++;
     }
 
-    if (enableAPMLMux == true)
-    {
-        for  ( int i = 0; i < num_of_apml_bus; i++)
-        {
-            sleep(10);
-            sprintf(cmd, "i2cset -f -y %d 0x%02x 0x%02x 0x01 >& /dev/null\n", apml_bus[i], IMX3112_MUX, IMX3112_MR46);
-            if (system(cmd) != 0)
-                std::cerr <<"Failed to set APML MUX on bus " << apml_bus[i] << " reg " << IMX3112_MR46 << " OR no CPU installed" << std::endl;
-
-            sleep(10);
-            sprintf(cmd, "i2cset -f -y %d 0x%02x 0x%02x 0x40 >& /dev/null\n", apml_bus, IMX3112_MUX, IMX3112_MR40);
-            if (system(cmd) != 0)
-                std::cerr <<"Failed to set APML MUX on bus " << apml_bus[i] << " reg " << IMX3112_MR40 << " OR no CPU installed" << std::endl;
-
-            sleep(10);
-            sprintf(cmd, "i2cset -f -y %d 0x%02x 0x%02x 0x40 >& /dev/null\n", apml_bus, IMX3112_MUX, IMX3112_MR41);
-            if (system(cmd) != 0)
-                std::cout <<"Failed to set APML MUX on bus " << apml_bus[i] << " reg " << IMX3112_MR41<< " OR no CPU installed" << std::endl;
-        }
-    }
+	if (enableAPMLMux == true)
+	{
+		sleep(1);
+		sprintf(cmd, "/usr/bin/set-apml.sh>& /dev/null\n");
+		if (system(cmd) != 0)
+			std::cout <<"Failed to set APML MUX " << std::endl;
+	}
 
     return;
 }

@@ -109,6 +109,7 @@ struct PowerCap
     {
         phosphor::logging::log<phosphor::logging::level::INFO>(
             "PowerCap is created");
+        enableAPMLMuxChannel();
         //init_power_capping();     // init from BMC stored settings
     }
     ~PowerCap()
