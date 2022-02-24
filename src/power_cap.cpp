@@ -279,7 +279,7 @@ void PowerCap::enableAPMLMuxChannel()
 	if (enableAPMLMux == true)
 	{
 		sleep(1);
-		sprintf(cmd, "/usr/bin/set-apml.sh %d >& /dev/null\n",num_of_apml_bus);
+		sprintf(cmd, "/usr/bin/set-apml.sh>& /dev/null\n");
 		if (system(cmd) != 0)
 			std::cout <<"Failed to set APML MUX " << std::endl;
 	}
