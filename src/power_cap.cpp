@@ -45,8 +45,8 @@ constexpr auto MAPPER_INTERFACE = "xyz.openbmc_project.ObjectMapper";
 
 PowerCapDataHolder* PowerCapDataHolder::instance = 0;
 
-struct i2c_info p0_info = {2, 60, 0};
-struct i2c_info p1_info = {3, 56, 0};
+struct i2c_info p0_info = {4, 0x22400000002, 0};
+struct i2c_info p1_info = {5, 0x22400000002, 0};
 
 // Set power limit to CPU using OOB library
 uint32_t PowerCap::set_oob_pwr_limit (struct i2c_info bus, uint32_t req_pwr_limit)
@@ -112,7 +112,8 @@ bool PowerCap::do_power_capping() {
     if((PowerCap::getPlatformID() == false) ||
        ((userPCapLimit == 0) && (AppliedPowerCapData == 0))) /* factory defaults */
     {
-        userPCapLimit = CPU_MAX_PWR_LIMIT; // Don't limit, max performance
+        userPCapLimit = CPU_MAX_PWR_LIMIT; // Set very high value
+                                           // CPU settles at max based on OPN
     }
 
     /* Do nothing, if new limit is same as old */
@@ -241,10 +242,6 @@ int  PowerCap::getGPIOValue(const std::string& name)
 void PowerCap::enableAPMLMuxChannel()
 {
     char cmd[CMD_BUFF_LEN];
-    int apml_bus[MAX_APML_BUS] = {
-            2,
-            3
-    };
     int num_of_apml_bus = MAX_APML_BUS;
     int retry = 0;
     bool enableAPMLMux = false;
