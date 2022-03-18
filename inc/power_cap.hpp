@@ -74,7 +74,7 @@ struct PowerCap
                     "PowerCap property changed");
 
                     userPCapLimit = std::get<uint32_t>(valPropMap->second);
-                    //do_power_capping();
+                    do_power_capping();
                 }
             }),
         propertiesChangedSignalCurrentHostState(
@@ -101,7 +101,7 @@ struct PowerCap
                         {
 
                             enableAPMLMuxChannel();
-                            //onHostPwrChange();
+                            onHostPwrChange();
                         }
                     }
                 }
@@ -109,7 +109,6 @@ struct PowerCap
     {
         phosphor::logging::log<phosphor::logging::level::INFO>(
             "PowerCap is created");
-        //init_power_capping();     // init from BMC stored settings
     }
     ~PowerCap()
     {
