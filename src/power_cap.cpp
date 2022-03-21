@@ -45,11 +45,11 @@ constexpr auto MAPPER_INTERFACE = "xyz.openbmc_project.ObjectMapper";
 
 PowerCapDataHolder* PowerCapDataHolder::instance = 0;
 
-struct i2c_info p0_info = {4, 0x22400000002, 0};
-struct i2c_info p1_info = {5, 0x22400000002, 0};
+struct bus_info p0_info = {4, 0x22400000002, 0, 1};
+struct bus_info p1_info = {5, 0x22400000002, 0, 1};
 
 // Set power limit to CPU using OOB library
-uint32_t PowerCap::set_oob_pwr_limit (struct i2c_info bus, uint32_t req_pwr_limit)
+uint32_t PowerCap::set_oob_pwr_limit (struct bus_info bus, uint32_t req_pwr_limit)
 {
     oob_status_t ret;
     uint32_t current_pwr_limit;
