@@ -7,8 +7,7 @@
 #include <sdbusplus/asio/connection.hpp>
 #include <sdbusplus/asio/property.hpp>
 #include <gpiod.hpp>
-
-
+#include <filesystem>
 extern "C" {
 #include <unistd.h>
 #include "linux/i2c-dev.h"
@@ -30,8 +29,9 @@ extern "C" {
 #define IMX3112_MR46    0x46
 #define IMX3112_MR40    0x40  // MUX port sel
 #define IMX3112_MR41    0x41  // MUX port rw enable
+#define FNAME_LEN       64
 #define CMD_BUFF_LEN    256
-#define MAX_RETRY       0x10
+#define I3C_BUS_NUM     4
 
 const std::string PwrOkName = "MON_POST_COMPLETE";
 constexpr auto POWER_SERVICE = "xyz.openbmc_project.Settings";
@@ -239,13 +239,47 @@ int  PowerCap::getGPIOValue(const std::string& name)
     return value;
 }
 
-void PowerCap::enableAPMLMuxChannel()
+void unbindDrivers(int i, int bus)
 {
     char cmd[CMD_BUFF_LEN];
+
+    /* Unbind sbtsi driver */
+    sprintf(cmd, "echo %d-22400000001 > /sys/bus/i3c/drivers/sbtsi_i3c/unbind", bus);
+    system(cmd);
+
+    /* Unbind platform driver */
+    sprintf(cmd, "echo 1e7a%d000.i3c%d > /sys/bus/platform/drivers/dw-i3c-master/unbind", (6+i), bus);
+    system(cmd);
+}
+
+void bindDrivers(int i, int bus)
+{
+    char cmd[CMD_BUFF_LEN];
+
+    /* Bind platform driver */
+    sprintf(cmd, "echo 1e7a%d000.i3c%d > /sys/bus/platform/drivers/dw-i3c-master/bind", (6+i), bus);
+    system(cmd);
+}
+void setAPMLMux(int i, int bus)
+{
+    char cmd[CMD_BUFF_LEN];
+
+    /* Set the Mux */
+    sprintf(cmd,"/usr/bin/i3ctransfer -d /dev/i3c-%d-4cc00000000 -w 0x%x,0x00,0x01", bus, IMX3112_MR46);
+    system(cmd);
+    sprintf(cmd,"/usr/bin/i3ctransfer -d /dev/i3c-%d-4cc00000000 -w 0x%x,0x00,0x40", bus, IMX3112_MR40);
+    system(cmd);
+    sprintf(cmd,"/usr/bin/i3ctransfer -d /dev/i3c-%d-4cc00000000 -w 0x%x,0x00,0x40", bus, IMX3112_MR41);
+    system(cmd);
+
+}
+
+void PowerCap::enableAPMLMuxChannel()
+{
+    char fname[FNAME_LEN];
     int num_of_apml_bus = MAX_APML_BUS;
     int retry = 0;
     bool enableAPMLMux = false;
-
 
     /* Code for APML bus Mux settings */
     if ( (strcmp(PowerCap::BoardName.c_str(), "Onyx") == 0) ||
@@ -260,28 +294,41 @@ void PowerCap::enableAPMLMuxChannel()
 
     while (retry < MAX_RETRY)
     {
-
         sleep(10);
         if (getGPIOValue(PwrOkName) > 0)
         {
-            std::cerr <<"POST Complete reached - Enable APML Mux" << std::endl;
+            std::cout <<"POST Complete reached - Enable APML Mux" << std::endl;
             enableAPMLMux = true;
             break;
         }
-
-
         retry++;
     }
 
-	if (enableAPMLMux == true)
-	{
-		sleep(1);
-		sprintf(cmd, "/usr/bin/set-apml.sh>& /dev/null\n");
-		if (system(cmd) != 0)
-			std::cout <<"Failed to set APML MUX " << std::endl;
-	}
+    if (enableAPMLMux == true)
+    {
+        int bus = I3C_BUS_NUM;
+        for (int i=0; i < num_of_apml_bus; i++ )
+        {
+            sprintf(fname, "/dev/i3c-%d-4cc00000000", bus);
+            if ( std::filesystem::exists(fname))
+            {
+                std::cout << "I3C-"<< bus <<" Mux dev exists" << std::endl;
+                /* Unbind drivers */
+                unbindDrivers(i, bus);
+            }
+            /* Bind drivers */
+            bindDrivers(i, bus);
+            /* Set Mux device */
+            setAPMLMux(i, bus);
+            /* Unbind drivers */
+            unbindDrivers(i, bus);
+            /* Bind drivers */
+            bindDrivers(i, bus);
+            bus++;
+        } /* for loop */
+    }
+    std::cout <<"APML MUX setting sucessful ..." << std::endl;
 
-    return;
 }
 
 // CPU loses the power limit applied after reboot
