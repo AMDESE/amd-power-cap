@@ -7,7 +7,7 @@
 #include <sdbusplus/asio/connection.hpp>
 #include <sdbusplus/asio/property.hpp>
 #include <gpiod.hpp>
-
+#include <filesystem>
 
 extern "C" {
 #include <unistd.h>
@@ -30,8 +30,29 @@ extern "C" {
 #define IMX3112_MR46    0x46
 #define IMX3112_MR40    0x40  // MUX port sel
 #define IMX3112_MR41    0x41  // MUX port rw enable
+#define FNAME_LEN       64
 #define CMD_BUFF_LEN    256
-#define MAX_RETRY       0x10
+#define I3C_BUS_NUM     4
+
+constexpr auto ONYX_SLT     = 61;   //0x3D
+constexpr auto ONYX_1       = 64;   //0x40
+constexpr auto ONYX_2       = 65;   //0x41
+constexpr auto ONYX_3       = 66;   //0x42
+constexpr auto ONYX_FR4     = 82;   //0x52
+constexpr auto QUARTZ_DAP   = 62;   //0x3E
+constexpr auto QUARTZ_1     = 67;   //0x43
+constexpr auto QUARTZ_2     = 68;   //0x44
+constexpr auto QUARTZ_3     = 69;   //0x45
+constexpr auto QUARTZ_FR4   = 81;   //0x51
+constexpr auto RUBY_1       = 70;   //0x46
+constexpr auto RUBY_2       = 71;   //0x47
+constexpr auto RUBY_3       = 72;   //0x48
+constexpr auto TITANITE_1   = 73;   //0x49
+constexpr auto TITANITE_2   = 74;   //0x4A
+constexpr auto TITANITE_3   = 75;   //0x4B
+constexpr auto TITANITE_4   = 76;   //0x4C
+constexpr auto TITANITE_5   = 77;   //0x4D
+constexpr auto TITANITE_6   = 78;   //0x4E
 
 const std::string PwrOkName = "MON_POST_COMPLETE";
 constexpr auto POWER_SERVICE = "xyz.openbmc_project.Settings";
@@ -109,8 +130,7 @@ bool PowerCap::do_power_capping() {
 
     int ret = -1;
 
-    if((PowerCap::getPlatformID() == false) ||
-       ((userPCapLimit == 0) && (AppliedPowerCapData == 0))) /* factory defaults */
+    if((userPCapLimit == 0) && (AppliedPowerCapData == 0))/* factory defaults */
     {
         userPCapLimit = CPU_MAX_PWR_LIMIT; // Set very high value
                                            // CPU settles at max based on OPN
@@ -124,9 +144,7 @@ bool PowerCap::do_power_capping() {
     ret = PowerCap::set_oob_pwr_limit(p0_info, userPCapLimit);
 
     if ((ret != -1) &&         /* socket P0 set was successful */
-        ((PowerCap::BoardName.compare("Quartz") == 0) ||
-         (PowerCap::BoardName.compare("Titanite") == 0))
-       )
+        (num_of_proc == 2) )
     {
         //P1 Power Cap Value Update
         ret = PowerCap::set_oob_pwr_limit(p1_info, userPCapLimit);
@@ -151,54 +169,45 @@ bool PowerCap::getPlatformID()
 {
     FILE *pf;
     char data[COMMAND_LEN];
+    std::stringstream ss;
 
     // Setup pipe for reading and execute to get u-boot environment
     // variable board_id.
     pf = popen(COMMAND_BOARD_ID,"r");
-
-    // Error handling
-    if(pf < 0)
+    if(pf > 0)
     {
-        std::cerr << "Unable to get Board ID, errno: " << errno << "message: " << strerror(errno) << "\n";
-        return false;
-    }
-
-    // Get the data from the process execution
-    if (fgets(data, COMMAND_LEN, pf) == NULL)
+        if (fgets(data, COMMAND_LEN , pf) != NULL)
+        {
+            ss << std::hex << (std::string)data;
+            ss >> board_id;
+        }
+        pclose(pf);
+        if ( board_id > 0 || board_id < 0xFF )
+        {
+            switch (board_id)
+            {
+                case ONYX_SLT:
+                case ONYX_1 ... ONYX_3:
+                case ONYX_FR4:
+                case RUBY_1 ... RUBY_3:
+                    num_of_proc = 1;
+                    break;
+                case QUARTZ_DAP:
+                case QUARTZ_1 ... QUARTZ_3:
+                case QUARTZ_FR4:
+                case TITANITE_1 ... TITANITE_6:
+                    num_of_proc = 2;
+                    break;
+                default:
+                    num_of_proc = 1;
+                    break;
+            }//switch
+            return true;
+        }
+     }
+    else
     {
-        std::cerr << "Board ID data is null, errno: " << errno << "message: " << strerror(errno) << "\n";
-        return false;
-    }
-
-    // the data is now in 'data'
-    if (pclose(pf) != 0)
-    {
-        std::cerr << " Error: Failed to close command stream\n";
-        return false;
-    }
-    std::string board_id(data);
-    if((board_id.compare("3D") == 0) || (board_id.compare("40") == 0) || (board_id.compare("41") == 0)
-        || (board_id.compare("42") == 0) || (board_id.compare("52") == 0))
-    {
-        PowerCap::BoardName = "Onyx";
-        return true;
-    }
-    if((board_id.compare("3E") == 0 ) || (board_id.compare("43") == 0) || (board_id.compare("44") ==0)
-        || (board_id.compare("45") == 0) || (board_id.compare("51") == 0))
-    {
-        PowerCap::BoardName = "Quartz";
-        return true;
-    }
-    if((board_id.compare("46")== 0) || (board_id.compare("47") == 0) || (board_id.compare("48") == 0))
-    {
-        PowerCap::BoardName = "Ruby";
-        return true;
-    }
-    if((board_id.compare("49") == 0 ) || (board_id.compare("4A") == 0) || (board_id.compare("4B") == 0)
-        || (board_id.compare("4C") == 0) || (board_id.compare("4D") == 0) || (board_id.compare("4E") == 0))
-    {
-        PowerCap::BoardName = "Titanite";
-        return true;
+        std::cerr << "Failed to open command stream" << std::endl;
     }
 
     return false;
@@ -239,49 +248,86 @@ int  PowerCap::getGPIOValue(const std::string& name)
     return value;
 }
 
-void PowerCap::enableAPMLMuxChannel()
+void unbindDrivers(int i, int bus)
 {
     char cmd[CMD_BUFF_LEN];
-    int num_of_apml_bus = MAX_APML_BUS;
+
+    /* Unbind sbtsi driver */
+    sprintf(cmd, "echo %d-22400000001 > /sys/bus/i3c/drivers/sbtsi_i3c/unbind", bus);
+    system(cmd);
+
+    /* Unbind platform driver */
+    sprintf(cmd, "echo 1e7a%d000.i3c%d > /sys/bus/platform/drivers/dw-i3c-master/unbind", (6+i), bus);
+    system(cmd);
+}
+
+void bindDrivers(int i, int bus)
+{
+    char cmd[CMD_BUFF_LEN];
+
+    /* Bind platform driver */
+    sprintf(cmd, "echo 1e7a%d000.i3c%d > /sys/bus/platform/drivers/dw-i3c-master/bind", (6+i), bus);
+    system(cmd);
+    sleep(1);
+}
+void setAPMLMux(int i, int bus)
+{
+    char cmd[CMD_BUFF_LEN];
+
+    /* Set the Mux */
+    sprintf(cmd,"/usr/bin/i3ctransfer -d /dev/i3c-%d-4cc00000000 -w 0x%x,0x00,0x01", bus, IMX3112_MR46);
+    system(cmd);
+    sprintf(cmd,"/usr/bin/i3ctransfer -d /dev/i3c-%d-4cc00000000 -w 0x%x,0x00,0x40", bus, IMX3112_MR40);
+    system(cmd);
+    sprintf(cmd,"/usr/bin/i3ctransfer -d /dev/i3c-%d-4cc00000000 -w 0x%x,0x00,0x40", bus, IMX3112_MR41);
+    system(cmd);
+
+}
+
+void PowerCap::enableAPMLMuxChannel()
+{
+    char fname[FNAME_LEN];
+//    int num_of_apml_bus = MAX_APML_BUS;
     int retry = 0;
     bool enableAPMLMux = false;
 
-
-    /* Code for APML bus Mux settings */
-    if ( (strcmp(PowerCap::BoardName.c_str(), "Onyx") == 0) ||
-         (strcmp(PowerCap::BoardName.c_str(), "Ruby") == 0) )
-    {
-        num_of_apml_bus = 1;
-    }
-    else
-    {
-        num_of_apml_bus = MAX_APML_BUS;
-    }
-
     while (retry < MAX_RETRY)
     {
-
         sleep(10);
         if (getGPIOValue(PwrOkName) > 0)
         {
-            std::cerr <<"POST Complete reached - Enable APML Mux" << std::endl;
+            std::cout <<"POST Complete reached - Enable APML Mux" << std::endl;
             enableAPMLMux = true;
             break;
         }
-
-
         retry++;
     }
 
-	if (enableAPMLMux == true)
-	{
-		sleep(1);
-		sprintf(cmd, "/usr/bin/set-apml.sh>& /dev/null\n");
-		if (system(cmd) != 0)
-			std::cout <<"Failed to set APML MUX " << std::endl;
-	}
+    if (enableAPMLMux == true)
+    {
+        int bus = I3C_BUS_NUM;
+        for (int i=0; i < num_of_proc; i++ )
+        {
+            sprintf(fname, "/dev/i3c-%d-4cc00000000", bus);
+            if ( std::filesystem::exists(fname))
+            {
+                std::cout << "I3C-"<< bus <<" Mux dev exists" << std::endl;
+                /* Unbind drivers */
+                unbindDrivers(i, bus);
+            }
+            /* Bind drivers */
+            bindDrivers(i, bus);
+            /* Set Mux device */
+            setAPMLMux(i, bus);
+            /* Unbind drivers */
+            unbindDrivers(i, bus);
+            /* Bind drivers */
+            bindDrivers(i, bus);
+            bus++;
+        } /* for loop */
+    }
+    std::cout <<"APML MUX setting sucessful ..." << std::endl;
 
-    return;
 }
 
 // CPU loses the power limit applied after reboot

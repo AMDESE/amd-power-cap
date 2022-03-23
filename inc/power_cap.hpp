@@ -99,7 +99,6 @@ struct PowerCap
                                 std::get<std::string>(valPropMap->second));
                         if (currentHostState != StateServer::Host::HostState::Off)
                         {
-
                             enableAPMLMuxChannel();
                             //onHostPwrChange();
                         }
@@ -109,6 +108,7 @@ struct PowerCap
     {
         phosphor::logging::log<phosphor::logging::level::INFO>(
             "PowerCap is created");
+            getPlatformID();
         //init_power_capping();     // init from BMC stored settings
     }
     ~PowerCap()
@@ -120,7 +120,8 @@ struct PowerCap
     sdbusplus::bus::bus &bus;
     sdbusplus::bus::match_t propertiesChangedPowerCapValue;
     sdbusplus::bus::match_t propertiesChangedSignalCurrentHostState;
-    std::string BoardName;
+    int num_of_proc = 1;
+    unsigned int board_id = 0;
     unsigned int userPCapLimit;     // user requested limit
     int AppliedPowerCapData;        // actual limit accepted by CPU
     bool PowerCapEnableData;        // is feature enabled
