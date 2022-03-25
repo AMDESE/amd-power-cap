@@ -74,7 +74,7 @@ struct PowerCap
                     "PowerCap property changed");
 
                     userPCapLimit = std::get<uint32_t>(valPropMap->second);
-                    //do_power_capping();
+                    do_power_capping();
                 }
             }),
         propertiesChangedSignalCurrentHostState(
@@ -100,7 +100,7 @@ struct PowerCap
                         if (currentHostState != StateServer::Host::HostState::Off)
                         {
                             enableAPMLMuxChannel();
-                            //onHostPwrChange();
+                            onHostPwrChange();
                         }
                     }
                 }
