@@ -70,9 +70,7 @@ struct PowerCap
                 auto valPropMap = msgData.find("PowerCap");
                 if (valPropMap != msgData.end())
                 {
-                    phosphor::logging::log<phosphor::logging::level::INFO>(
-                    "PowerCap property changed");
-
+                    sd_journal_print(LOG_DEBUG, "PowerCap property changed \n");
                     userPCapLimit = std::get<uint32_t>(valPropMap->second);
                     do_power_capping();
                 }
@@ -107,8 +105,8 @@ struct PowerCap
                 }
         })
     {
-        phosphor::logging::log<phosphor::logging::level::INFO>(
-            "PowerCap is created");
+        sd_journal_print(LOG_DEBUG, "PowerCap is created \n");
+        getPlatformID();
         enableAPMLMuxChannel();
         init_power_capping();     // init from BMC stored settings
     }
@@ -121,7 +119,8 @@ struct PowerCap
     sdbusplus::bus::bus &bus;
     sdbusplus::bus::match_t propertiesChangedPowerCapValue;
     sdbusplus::bus::match_t propertiesChangedSignalCurrentHostState;
-    std::string BoardName;
+    int num_of_proc = 1;
+    unsigned int board_id = 0;
     unsigned int userPCapLimit;     // user requested limit
     int AppliedPowerCapData;        // actual limit accepted by CPU
     bool PowerCapEnableData;        // is feature enabled
