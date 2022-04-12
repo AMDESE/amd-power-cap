@@ -8,6 +8,8 @@
 #include <sdbusplus/asio/property.hpp>
 #include <gpiod.hpp>
 #include <filesystem>
+#include <linux/types.h>
+#include <linux/ioctl.h>
 
 extern "C" {
 #include <unistd.h>
@@ -24,21 +26,45 @@ extern "C" {
 #define MAX_RETRY           10
 #define CPU_MAX_PWR_LIMIT   (1000) //1000 watts, max perf
 
-// Definition for APML Mux setting
-#define MAX_APML_BUS    2
-#define I3C_BUS_APML0   4
-#define I3C_BUS_APML1   5
-#define I3C_MUX_DEV     0x4cc00000000
-#define I3C_TSI_DEV     0x22400000001
-#define I3C_RMI_DEV     0x22400000002
-#define IMX3112_MUX     0x70
-#define IMX3112_MR46    0x46
-#define IMX3112_MR40    0x40  // MUX port sel
-#define IMX3112_MR41    0x41  // MUX port rw enable
-#define CMD_BUFF_LEN    256
-#define FNAME_LEN       64
-#define I3C_WAIT_TIME   2     // seconds
+// Definition for I3C APML
+#define MAX_APML_BUS     2
+#define I3C_BUS_APML0    4
+#define I3C_BUS_APML1    5
+#define I3C_MUX_DEV      0x4cc00000000
+#define I3C_TSI_DEV      0x22400000001
+#define I3C_RMI_DEV      0x22400000002
+#define I3C_MUX_DATA_LEN 3
+#define IMX3112_MUX      0x70
+#define IMX3112_MR46     0x46
+#define IMX3112_MR40     0x40  // MUX port sel
+#define IMX3112_MR41     0x41  // MUX port RW enable
+#define CMD_BUFF_LEN     256
+#define FNAME_LEN        128
+#define I3C_WAIT_TIME    2     // 2 seconds
 
+// IOCTL command
+#define I3C_DEV_IOC_MAGIC 0x07
+
+/**
+ * struct i3c_ioc_priv_xfer - I3C SDR ioctl private transfer
+ * @data: Holds pointer to userspace buffer with transmit data.
+ * @len: Length of data buffer buffers, in bytes.
+ * @rnw: encodes the transfer direction. true for a read, false for a write
+ */
+struct i3c_ioc_priv_xfer {
+        __u64 data;
+        __u16 len;
+        __u8 rnw;
+        __u8 pad[5];
+};
+
+
+#define I3C_PRIV_XFER_SIZE(N)   \
+        ((((sizeof(struct i3c_ioc_priv_xfer)) * (N)) < (1 << _IOC_SIZEBITS)) \
+        ? ((sizeof(struct i3c_ioc_priv_xfer)) * (N)) : 0)
+
+#define I3C_IOC_PRIV_XFER(N)    \
+        _IOC(_IOC_READ|_IOC_WRITE, I3C_DEV_IOC_MAGIC, 30, I3C_PRIV_XFER_SIZE(N))
 
 // Platform Type
 constexpr auto ONYX_SLT     = 61;   //0x3D
@@ -137,6 +163,7 @@ uint32_t PowerCap::set_oob_pwr_limit (struct i2c_info bus, uint32_t req_pwr_limi
 bool PowerCap::do_power_capping() {
 
     int ret = -1;
+    bool set_powercap = false;
 
     if ((userPCapLimit == 0) && (AppliedPowerCapData == 0)) /* factory defaults */
     {
@@ -150,27 +177,30 @@ bool PowerCap::do_power_capping() {
 
     //P0 Power Cap Value Update
     ret = PowerCap::set_oob_pwr_limit(p0_info, userPCapLimit);
-
-    if ((ret != -1) &&         /* socket P0 set was successful */
-	(num_of_proc == 2) )
-    {
-        //P1 Power Cap Value Update
-        ret = PowerCap::set_oob_pwr_limit(p1_info, userPCapLimit);
-    }
-
     // update d-bus property if CPU applied a different limit
     // Assume we have a 240W CPU part, but user requests 320W
     // CPU will report 240W since it is the max.
-    //
-    // We assume both sockets have same OPN
-    // TBD: check if 2P config supports different OPNs
-    if ((ret > 0) && (ret != userPCapLimit))
+    if ((ret > 0) && (ret != userPCapLimit)) {
+        // socket P0 set was successful
+        // We assume both sockets have same OPN
         PowerCap::set_power_cap_limit(ret);
+        set_powercap = true;
+    }
 
-    if (ret > 0)
-        return true;
-    else
-        return false;
+    // P1 Power Cap Value Update
+    if (num_of_proc == 2)
+    {
+        ret = PowerCap::set_oob_pwr_limit(p1_info, userPCapLimit);
+        // TBD: check if 2P config supports different OPNs
+        if (set_powercap == false) {
+            if ((ret > 0) && (ret != userPCapLimit)) {
+                PowerCap::set_power_cap_limit(ret);
+                set_powercap = true;
+            }
+	}
+    }
+
+    return set_powercap;
 }
 
 bool PowerCap::getPlatformID()
@@ -260,7 +290,7 @@ int  PowerCap::getGPIOValue(const std::string& name)
 void system_check(char *cmd)
 {
     if ( system(cmd) < 0)
-        sd_journal_print(LOG_ERR, "Filed to run system cmd: %s \n", cmd);
+        sd_journal_print(LOG_ERR, "Failed to run system cmd: %s \n", cmd);
 }
 void unbindDrivers(int i)
 {
@@ -290,18 +320,57 @@ void bindDrivers(int i)
     system_check(cmd);
     sleep(I3C_WAIT_TIME);
 }
+void i3cTransfer(int fd, int len, uint8_t *data )
+{
+    struct i3c_ioc_priv_xfer *xfers;
+    int nxfers = 1;
+
+    // write byte requires one transfer, allocate memory
+    xfers = (struct i3c_ioc_priv_xfer *)calloc(nxfers, sizeof(*xfers));
+    if (!xfers) {
+        sd_journal_print(LOG_ERR, "Error: alloc for transfer\n");
+	return;
+    }
+    // update the priv_xfer structure
+    xfers[0].rnw = 0;
+    xfers[0].len = len;
+    xfers[0].data = (uintptr_t)data;
+
+    // ioctl call to priv xfer
+    if (ioctl(fd, I3C_IOC_PRIV_XFER(nxfers), xfers) < 0) {
+	sd_journal_print(LOG_ERR, "Error: transfer failed with err (%d)\n", errno);
+    }
+    //free allocated memory
+    free(xfers);
+}
 void setAPMLMux(int i)
 {
-    char cmd[CMD_BUFF_LEN];
+    int fd;
+    char i3c_path[FNAME_LEN];
+    uint8_t data[I3C_MUX_DATA_LEN];
+
+    // open I3C Mux Device
+    snprintf(i3c_path, FNAME_LEN, "/dev/i3c-%d-%llx",I3C_BUS[i], I3C_MUX_DEV);
+
+    fd = open(i3c_path, O_RDWR);
+    if (fd < 0) {
+        sd_journal_print(LOG_ERR, "Error Opening device %s \n", i3c_path);
+        return;
+    }
 
     // Set the Mux
-    sprintf(cmd,"/usr/bin/i3ctransfer -d /dev/i3c-%d-%llx -w 0x%x,0x00,0x01", I3C_BUS[i], I3C_MUX_DEV,  IMX3112_MR46);
-    system_check(cmd);
-    sprintf(cmd,"/usr/bin/i3ctransfer -d /dev/i3c-%d-%llx -w 0x%x,0x00,0x40", I3C_BUS[i], I3C_MUX_DEV, IMX3112_MR40);
-    system_check(cmd);
-    sprintf(cmd,"/usr/bin/i3ctransfer -d /dev/i3c-%d-%llx -w 0x%x,0x00,0x40", I3C_BUS[i], I3C_MUX_DEV, IMX3112_MR41);
-    system_check(cmd);
+    data[1] = 0x00;
+    data[0] = IMX3112_MR46;
+    data[2] = 0x01;
+    i3cTransfer(fd, I3C_MUX_DATA_LEN, data);
+    data[0] = IMX3112_MR40;
+    data[2] = 0x40;
+    i3cTransfer(fd, I3C_MUX_DATA_LEN, data);
+    data[0] = IMX3112_MR41;
+    data[2] = 0x40;
+    i3cTransfer(fd, I3C_MUX_DATA_LEN, data);
 
+    close(fd);
 }
 
 void PowerCap::enableAPMLMuxChannel()
