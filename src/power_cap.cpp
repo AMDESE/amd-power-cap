@@ -375,7 +375,6 @@ void setAPMLMux(int i)
 
 void PowerCap::enableAPMLMuxChannel()
 {
-    char fname[FNAME_LEN];
     int retry = 0;
     bool enableAPMLMux = false;
 
