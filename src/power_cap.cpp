@@ -292,14 +292,14 @@ void system_check(char *cmd)
     if ( system(cmd) < 0)
         sd_journal_print(LOG_ERR, "Failed to run system cmd: %s \n", cmd);
 }
-void unbindDrivers(int i)
+void PowerCap::unbindDrivers(int i)
 {
     char cmd[CMD_BUFF_LEN];
 
     // Unbind sbtsi driver
     sprintf(cmd, "echo %d-%llx > %sunbind", I3C_BUS[i], I3C_TSI_DEV, TSI_DRIVER_PATH );
     system_check(cmd);
-    sleep(I3C_WAIT_TIME);
+
     // Unbind platform driver
     if (i == 0)
         sprintf(cmd, "echo %s > %sunbind", I3C_DEV0, I3C_DRIVER_PATH );
@@ -308,7 +308,19 @@ void unbindDrivers(int i)
     system_check(cmd);
     sleep(I3C_WAIT_TIME);
 }
-void bindDrivers(int i)
+void PowerCap::unbindSbtsiDrivers()
+{
+    char cmd[CMD_BUFF_LEN];
+
+    // Unbind sbtsi driver
+    sprintf(cmd, "echo %d-%llx > %sunbind", I3C_BUS[0], I3C_TSI_DEV, TSI_DRIVER_PATH );
+    system_check(cmd);
+    if (num_of_proc == 2) {
+        sprintf(cmd, "echo %d-%llx > %sunbind", I3C_BUS[1], I3C_TSI_DEV, TSI_DRIVER_PATH );
+        system_check(cmd);
+    }
+}
+void PowerCap::bindDrivers(int i)
 {
     char cmd[CMD_BUFF_LEN];
 
@@ -343,7 +355,7 @@ void i3cTransfer(int fd, int len, uint8_t *data )
     //free allocated memory
     free(xfers);
 }
-void setAPMLMux(int i)
+void PowerCap::setAPMLMux(int i)
 {
     int fd;
     char i3c_path[FNAME_LEN];
