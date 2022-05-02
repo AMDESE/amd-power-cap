@@ -95,9 +95,11 @@ struct PowerCap
                         StateServer::Host::HostState currentHostState =
                             StateServer::Host::convertHostStateFromString(
                                 std::get<std::string>(valPropMap->second));
-                        if (currentHostState != StateServer::Host::HostState::Off)
+                        if (currentHostState == StateServer::Host::HostState::Off)
                         {
-
+                            unbindSbtsiDrivers();
+                        }
+                        else {
                             enableAPMLMuxChannel();
                             onHostPwrChange();
                         }
@@ -134,6 +136,10 @@ struct PowerCap
     void onHostPwrChange();
     int  getGPIOValue(const std::string& name);
     void enableAPMLMuxChannel();
+    void setAPMLMux(int cpu);
+    void unbindSbtsiDrivers();
+    void unbindDrivers(int cpu);
+    void bindDrivers(int cpu);
 
     // oob-lib functions
     bool  getPlatformID();
