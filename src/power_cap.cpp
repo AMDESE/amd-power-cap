@@ -15,7 +15,7 @@ extern "C" {
 #include <unistd.h>
 #include "linux/i2c-dev.h"
 #include "i2c/smbus.h"
-#include "esmi_common.h"
+#include "apml.h"
 #include "esmi_mailbox.h"
 #include "esmi_rmi.h"
 }
@@ -104,11 +104,11 @@ constexpr auto MAPPER_INTERFACE = "xyz.openbmc_project.ObjectMapper";
 
 PowerCapDataHolder* PowerCapDataHolder::instance = 0;
 
-struct i2c_info p0_info = {I3C_BUS_APML0, I3C_RMI_DEV, 0};
-struct i2c_info p1_info = {I3C_BUS_APML1, I3C_RMI_DEV, 0};
+uint8_t p0_info = 0;
+uint8_t p1_info = 1;
 
 // Set power limit to CPU using OOB library
-uint32_t PowerCap::set_oob_pwr_limit (struct i2c_info bus, uint32_t req_pwr_limit)
+uint32_t PowerCap::set_oob_pwr_limit (uint8_t bus, uint32_t req_pwr_limit)
 {
     oob_status_t ret;
     uint32_t current_pwr_limit;

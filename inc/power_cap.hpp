@@ -143,7 +143,7 @@ struct PowerCap
 
     // oob-lib functions
     bool  getPlatformID();
-    uint32_t set_oob_pwr_limit(struct i2c_info bus, uint32_t req_pwr_limit);
+    uint32_t set_oob_pwr_limit(uint8_t bus, uint32_t req_pwr_limit);
 
     // d-bus functions
     template <typename T>
