@@ -88,6 +88,7 @@ constexpr auto TITANITE_5   = 77;   //0x4D
 constexpr auto TITANITE_6   = 78;   //0x4E
 constexpr auto I3C_DRIVER_PATH = "/sys/bus/platform/drivers/dw-i3c-master/";
 constexpr auto TSI_DRIVER_PATH = "/sys/bus/i3c/drivers/sbtsi_i3c/";
+constexpr auto RMI_DRIVER_PATH = "/sys/bus/i3c/drivers/sbrmi_i3c/";
 constexpr auto I3C_DEV0        = "1e7a6000.i3c4";
 constexpr auto I3C_DEV1        = "1e7a7000.i3c5";
 const     int  I3C_BUS[2] = {I3C_BUS_APML0 , I3C_BUS_APML1};
@@ -299,6 +300,9 @@ void PowerCap::unbindDrivers(int i)
     // Unbind sbtsi driver
     sprintf(cmd, "echo %d-%llx > %sunbind", I3C_BUS[i], I3C_TSI_DEV, TSI_DRIVER_PATH );
     system_check(cmd);
+    // Unbind sbrmi driver
+    sprintf(cmd, "echo %d-%llx > %sunbind", I3C_BUS[i], I3C_RMI_DEV, RMI_DRIVER_PATH );
+    system_check(cmd);
 
     // Unbind platform driver
     if (i == 0)
@@ -308,15 +312,20 @@ void PowerCap::unbindDrivers(int i)
     system_check(cmd);
     sleep(I3C_WAIT_TIME);
 }
-void PowerCap::unbindSbtsiDrivers()
+void PowerCap::unbindApmlDrivers()
 {
     char cmd[CMD_BUFF_LEN];
 
     // Unbind sbtsi driver
     sprintf(cmd, "echo %d-%llx > %sunbind", I3C_BUS[0], I3C_TSI_DEV, TSI_DRIVER_PATH );
     system_check(cmd);
+    // Unbind sbrmi driver
+    sprintf(cmd, "echo %d-%llx > %sunbind", I3C_BUS[0], I3C_RMI_DEV, RMI_DRIVER_PATH );
+    system_check(cmd);
     if (num_of_proc == 2) {
         sprintf(cmd, "echo %d-%llx > %sunbind", I3C_BUS[1], I3C_TSI_DEV, TSI_DRIVER_PATH );
+        system_check(cmd);
+        sprintf(cmd, "echo %d-%llx > %sunbind", I3C_BUS[1], I3C_RMI_DEV, RMI_DRIVER_PATH );
         system_check(cmd);
     }
 }

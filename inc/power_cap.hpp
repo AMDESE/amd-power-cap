@@ -97,7 +97,7 @@ struct PowerCap
                                 std::get<std::string>(valPropMap->second));
                         if (currentHostState == StateServer::Host::HostState::Off)
                         {
-                            unbindSbtsiDrivers();
+                            unbindApmlDrivers();
                         }
                         else {
                             enableAPMLMuxChannel();
@@ -137,7 +137,7 @@ struct PowerCap
     int  getGPIOValue(const std::string& name);
     void enableAPMLMuxChannel();
     void setAPMLMux(int cpu);
-    void unbindSbtsiDrivers();
+    void unbindApmlDrivers();
     void unbindDrivers(int cpu);
     void bindDrivers(int cpu);
 
