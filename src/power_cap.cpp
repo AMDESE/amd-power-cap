@@ -18,6 +18,7 @@ extern "C" {
 #include "apml.h"
 #include "esmi_mailbox.h"
 #include "esmi_rmi.h"
+#include "esmi_cpuid_msr.h"
 }
 
 #define COMMAND_BOARD_ID    ("/sbin/fw_printenv -n board_id")
@@ -44,6 +45,16 @@ extern "C" {
 
 // IOCTL command
 #define I3C_DEV_IOC_MAGIC 0x07
+
+// AMPL command
+#define EAX_VAL 1
+#define EAX_DATA_LEN_1 4
+#define EAX_DATA_LEN_2 8
+#define EAX_DATA_LEN_3 16
+#define EAX_DATA_LEN_4 20
+#define EAX_MASK_MAGIC_1 0xf
+#define EAX_MASK_MAGIC_2 0xff
+#define EAX_MASK_MAGIC_3 0x10
 
 /**
  * struct i3c_ioc_priv_xfer - I3C SDR ioctl private transfer
@@ -107,7 +118,56 @@ PowerCapDataHolder* PowerCapDataHolder::instance = 0;
 
 uint8_t p0_info = 0;
 uint8_t p1_info = 1;
+uint32_t eax;
+uint32_t ebx;
+uint32_t ecx;
+uint32_t edx;
 
+// Init CPU Information using OOB library
+void PowerCap::getCPUInformation()
+{
+  //default call processor 0
+  ConnectApml(0);
+  if(num_of_proc == MAX_APML_BUS)
+  {
+    ConnectApml(1);
+  }
+
+}
+//Call Apml library to get the CPU Info
+bool PowerCap::ConnectApml(uint8_t soc_num )
+{
+    oob_status_t ret;
+    uint32_t family_id;
+    uint32_t model_id;
+    uint32_t step_id;
+    int core_id = 0;
+    ebx = 0;
+    edx = 0;
+    eax = EAX_VAL;
+    ecx = 0;
+    ret = esmi_oob_cpuid(soc_num, core_id, &eax, &ebx, &ecx, &edx);
+    if(ret != 0)
+    {
+      sd_journal_print(LOG_ERR, "apml API -unable to get the CPU value \n");
+    }
+    else
+    {
+      family_id = ((eax >> EAX_DATA_LEN_2) & EAX_MASK_MAGIC_1) + ((eax >> EAX_DATA_LEN_4) & EAX_MASK_MAGIC_2);
+      model_id = ((eax >> EAX_DATA_LEN_3) & EAX_MASK_MAGIC_1) * EAX_MASK_MAGIC_3 + ((eax >> EAX_DATA_LEN_1) & EAX_MASK_MAGIC_1);
+      step_id = eax & EAX_MASK_MAGIC_1 ;
+      char cpuid[CMD_BUFF_LEN];
+      sprintf(cpuid, "0x%x (%d)#0x%x (%d)#0x%x (%d)", family_id, family_id,model_id,model_id,step_id,step_id);
+      std::string cpu = "CPUID1";
+      if (soc_num == 1)
+      {
+        cpu = "CPUID2";
+      }
+      set_cpuid(cpuid, cpu);
+      return true;
+    }
+    return false;
+}
 // Set power limit to CPU using OOB library
 uint32_t PowerCap::set_oob_pwr_limit (uint8_t bus, uint32_t req_pwr_limit)
 {
@@ -582,4 +642,26 @@ void PowerCap::set_power_cap_limit(uint32_t value)
         "org.freedesktop.DBus.Properties", "Set",
         "xyz.openbmc_project.Control.Power.Cap", "PowerCap",
         std::variant<uint32_t>(value));
+}
+
+//Set the CPU DBus value
+void PowerCap::set_cpuid(char *value, std::string CPUID)
+{
+    sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
+    boost::system::error_code ec;
+    boost::asio::io_context io;
+    auto conn = std::make_shared<sdbusplus::asio::connection>(io);
+
+    conn->async_method_call(
+        [this](boost::system::error_code ec) {
+            if (ec)
+            {
+                sd_journal_print(LOG_ERR, "Failed to set cpuID value in dbus interface \n");
+            }
+        },
+        "xyz.openbmc_project.Settings",
+        "/xyz/openbmc_project/control/host0/power_cap",
+        "org.freedesktop.DBus.Properties", "Set",
+        "xyz.openbmc_project.Control.Power.Cap", CPUID,
+        std::variant<std::string>(value));
 }
