@@ -109,6 +109,7 @@ struct PowerCap
     {
         sd_journal_print(LOG_DEBUG, "PowerCap is created \n");
         getPlatformID();
+	getCPUInformation();
         enableAPMLMuxChannel();
         init_power_capping();     // init from BMC stored settings
     }
@@ -131,6 +132,7 @@ struct PowerCap
     bool get_power_cap_enabled_setting();
     void get_power_cap_limit();
     void set_power_cap_limit(uint32_t pwr_limit);
+    void set_cpuid(char *, std::string cpu);
     void init_power_capping();
     bool do_power_capping();
     void onHostPwrChange();
@@ -144,7 +146,8 @@ struct PowerCap
     // oob-lib functions
     bool  getPlatformID();
     uint32_t set_oob_pwr_limit(uint8_t bus, uint32_t req_pwr_limit);
-
+    void getCPUInformation();
+    bool ConnectApml(uint8_t soc_num);
     // d-bus functions
     template <typename T>
     T getProperty(sdbusplus::bus::bus& bus, const char* service, const char* path,
