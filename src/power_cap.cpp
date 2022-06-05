@@ -181,7 +181,7 @@ uint32_t PowerCap::set_oob_pwr_limit (uint8_t bus, uint32_t req_pwr_limit)
     }
     else
     {
-        sd_journal_print(LOG_ERR, "unable to read power limit \n");
+        sd_journal_print(LOG_INFO, "unable to read power limit \n");
         return -1;
     }
 
@@ -465,7 +465,7 @@ void PowerCap::enableAPMLMuxChannel()
         sleep(10);
         if (getGPIOValue(PwrOkName) > 0)
         {
-            sd_journal_print(LOG_ERR, "POST Complete reached - Enable APML Mux \n");
+            sd_journal_print(LOG_INFO, "POST Complete reached - Enable APML Mux \n");
             enableAPMLMux = true;
             break;
         }
@@ -487,7 +487,7 @@ void PowerCap::enableAPMLMuxChannel()
             bindDrivers(i);
         } // for loop
     }
-    sd_journal_print(LOG_ERR, "APML MUX setting sucessful for %d CPU \n", num_of_proc);
+    sd_journal_print(LOG_INFO, "APML MUX setting sucessful for %d CPU \n", num_of_proc);
 }
 
 // CPU loses the power limit applied after reboot
@@ -507,7 +507,7 @@ void PowerCap::onHostPwrChange()
         while((do_power_capping() == false) && (retry < MAX_RETRY))
         {
             sleep(30);
-            sd_journal_print(LOG_ERR, "SMU not initialized, retrying...\n");
+            sd_journal_print(LOG_INFO, "SMU not initialized, retrying...\n");
             retry++;
         }
     }
