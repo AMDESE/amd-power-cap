@@ -27,6 +27,10 @@ extern "C" {
 #define MAX_RETRY           10
 #define CPU_MAX_PWR_LIMIT   (1000) //1000 watts, max perf
 
+// Definition for I2C APML
+// Use the foollowing define to enable APML Over I2C Bus
+//#define ENABLE_I2C_APML 1
+
 // Definition for I3C APML
 #define MAX_APML_BUS     2
 #define I3C_BUS_APML0    4
@@ -426,6 +430,9 @@ void i3cTransfer(int fd, int len, uint8_t *data )
 }
 void PowerCap::setAPMLMux(int i)
 {
+#ifdef ENABLE_I2C_APML
+    system("/usr/bin/set-apml.sh");
+#else
     int fd;
     char i3c_path[FNAME_LEN];
     uint8_t data[I3C_MUX_DATA_LEN];
@@ -452,6 +459,7 @@ void PowerCap::setAPMLMux(int i)
     i3cTransfer(fd, I3C_MUX_DATA_LEN, data);
 
     close(fd);
+#endif  // ENABLE_I2C_APML
 }
 
 void PowerCap::enableAPMLMuxChannel()
@@ -473,6 +481,9 @@ void PowerCap::enableAPMLMuxChannel()
     }
     if (enableAPMLMux == true)
     {
+#ifdef ENABLE_I2C_APML
+        setAPMLMux(0);
+#else
         for (int i=0; i < num_of_proc; i++ )
         {
 	    // Unbind drivers
@@ -486,6 +497,7 @@ void PowerCap::enableAPMLMuxChannel()
             // Bind drivers
             bindDrivers(i);
         } // for loop
+#endif  // ENABLE_I2C_APML
     }
     sd_journal_print(LOG_INFO, "APML MUX setting sucessful for %d CPU \n", num_of_proc);
 }
