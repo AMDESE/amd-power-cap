@@ -138,6 +138,7 @@ void PowerCap::getCPUInformation()
 bool PowerCap::ConnectApml(uint8_t soc_num )
 {
     oob_status_t ret;
+    int retry = 0;
     uint32_t family_id;
     uint32_t model_id;
     uint32_t step_id;
@@ -146,7 +147,20 @@ bool PowerCap::ConnectApml(uint8_t soc_num )
     edx = 0;
     eax = EAX_VAL;
     ecx = 0;
-    ret = esmi_oob_cpuid(soc_num, core_id, &eax, &ebx, &ecx, &edx);
+
+    while(retry < MAX_RETRY)
+    {
+      ret = esmi_oob_cpuid(soc_num, core_id, &eax, &ebx, &ecx, &edx);
+      if(ret != 0)
+      {
+        sleep(10);
+        retry++;
+      }
+      else
+      {
+        break;
+      }
+    }
     if(ret != 0)
     {
       sd_journal_print(LOG_ERR, "apml API -unable to get the CPU value \n");
