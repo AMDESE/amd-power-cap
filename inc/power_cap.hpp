@@ -102,6 +102,7 @@ struct PowerCap
                         else {
                             enableAPMLMuxChannel();
                             onHostPwrChange();
+                            getCPUInformation();
                         }
                     }
                 }
@@ -109,7 +110,6 @@ struct PowerCap
     {
         sd_journal_print(LOG_DEBUG, "PowerCap is created \n");
         getPlatformID();
-	getCPUInformation();
         enableAPMLMuxChannel();
         init_power_capping();     // init from BMC stored settings
     }
