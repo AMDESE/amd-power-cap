@@ -60,6 +60,8 @@ extern "C" {
 #define EAX_MASK_MAGIC_2 0xff
 #define EAX_MASK_MAGIC_3 0x10
 
+#define APML_INIT_DONE_FILE	"/tmp/apml_init_complete"
+
 /**
  * struct i3c_ioc_priv_xfer - I3C SDR ioctl private transfer
  * @data: Holds pointer to userspace buffer with transmit data.
@@ -381,10 +383,12 @@ int  PowerCap::getGPIOValue(const std::string& name)
     return value;
 }
 
-void system_check(char *cmd)
+int system_check(char *cmd)
 {
-    if ( system(cmd) < 0)
+    int rc = system(cmd);
+    if (rc < 0)
         sd_journal_print(LOG_ERR, "Failed to run system cmd: %s \n", cmd);
+    return rc;
 }
 void PowerCap::unbindDrivers(int i)
 {
@@ -422,17 +426,19 @@ void PowerCap::unbindApmlDrivers()
         system_check(cmd);
     }
 }
-void PowerCap::bindDrivers(int i)
+int PowerCap::bindDrivers(int i)
 {
     char cmd[CMD_BUFF_LEN];
+    int rc;
 
     // Bind platform driver
     if (i == 0)
         sprintf(cmd, "echo %s > %sbind", I3C_DEV0, I3C_DRIVER_PATH );
     else
         sprintf(cmd, "echo %s > %sbind", I3C_DEV1, I3C_DRIVER_PATH );
-    system_check(cmd);
+    rc = system_check(cmd);
     sleep(I3C_WAIT_TIME);
+    return rc;
 }
 void i3cTransfer(int fd, int len, uint8_t *data )
 {
@@ -457,7 +463,7 @@ void i3cTransfer(int fd, int len, uint8_t *data )
     //free allocated memory
     free(xfers);
 }
-void PowerCap::setAPMLMux(int i)
+int PowerCap::setAPMLMux(int i)
 {
 #ifdef ENABLE_I2C_APML
     system("/usr/bin/set-apml.sh");
@@ -472,7 +478,7 @@ void PowerCap::setAPMLMux(int i)
     fd = open(i3c_path, O_RDWR);
     if (fd < 0) {
         sd_journal_print(LOG_ERR, "Error Opening device %s \n", i3c_path);
-        return;
+        return fd;
     }
 
     // Set the Mux
@@ -489,11 +495,13 @@ void PowerCap::setAPMLMux(int i)
 
     close(fd);
 #endif  // ENABLE_I2C_APML
+    return 0;
 }
 
 void PowerCap::enableAPMLMuxChannel()
 {
     int retry = 0;
+    int bind_rc = 0;
     bool enableAPMLMux = false;
 
     while (retry < MAX_RETRY)
@@ -511,7 +519,7 @@ void PowerCap::enableAPMLMuxChannel()
     if (enableAPMLMux == true)
     {
 #ifdef ENABLE_I2C_APML
-        setAPMLMux(0);
+        bind_rc = setAPMLMux(0);
 #else
         for (int i=0; i < num_of_proc; i++ )
         {
@@ -524,9 +532,18 @@ void PowerCap::enableAPMLMuxChannel()
             // Unbind drivers
             unbindDrivers(i);
             // Bind drivers
-            bindDrivers(i);
+            bind_rc = bindDrivers(i);
         } // for loop
 #endif  // ENABLE_I2C_APML
+
+        // Touch a file to indicate i3c mux and APML slaves
+        // are configured.
+        if (bind_rc >= 0)
+        {
+            std::ofstream initdone (APML_INIT_DONE_FILE);
+            initdone.close();
+        }
+
     }
     sd_journal_print(LOG_INFO, "APML MUX setting sucessful for %d CPU \n", num_of_proc);
 }

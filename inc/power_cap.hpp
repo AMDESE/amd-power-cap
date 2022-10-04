@@ -138,10 +138,10 @@ struct PowerCap
     void onHostPwrChange();
     int  getGPIOValue(const std::string& name);
     void enableAPMLMuxChannel();
-    void setAPMLMux(int cpu);
+    int setAPMLMux(int cpu);
     void unbindApmlDrivers();
     void unbindDrivers(int cpu);
-    void bindDrivers(int cpu);
+    int bindDrivers(int cpu);
 
     // oob-lib functions
     bool  getPlatformID();
