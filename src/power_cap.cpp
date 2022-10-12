@@ -229,6 +229,10 @@ uint32_t PowerCap::set_oob_pwr_limit (uint8_t bus, uint32_t req_pwr_limit)
         sd_journal_print(LOG_ERR, "Setting power cap value failed \n");
         return -1;
     }
+    else
+    {
+        sd_journal_print(LOG_INFO,"Power Limit Set Successfully\n");
+    }
 
     // Readback and confirm the max limit accepted by CPU
     // if CPU doesnt support user limit, it returns its default power limit
@@ -254,12 +258,6 @@ bool PowerCap::do_power_capping() {
 
     int ret = -1;
     bool set_powercap = false;
-
-    if ((userPCapLimit == 0) && (AppliedPowerCapData == 0)) /* factory defaults */
-    {
-        userPCapLimit = CPU_MAX_PWR_LIMIT; // Set very high value
-                                           // CPU settles at max based on OPN
-    }
 
     /* Do nothing, if new limit is same as old */
     if (AppliedPowerCapData == userPCapLimit)
@@ -589,7 +587,7 @@ void PowerCap::init_power_capping()
         retry++;
     }
 
-    if(status)
+    if(status && (PowerCapEnableData == true))
     {
         PowerCap::get_power_cap_limit();
 
@@ -700,6 +698,7 @@ void PowerCap::set_power_cap_limit(uint32_t value)
         "org.freedesktop.DBus.Properties", "Set",
         "xyz.openbmc_project.Control.Power.Cap", "PowerCap",
         std::variant<uint32_t>(value));
+    AppliedPowerCapData = value;
 }
 
 //Set the CPU DBus value
