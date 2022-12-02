@@ -97,10 +97,10 @@ struct PowerCap
                                 std::get<std::string>(valPropMap->second));
                         if (currentHostState == StateServer::Host::HostState::Off)
                         {
-                            unbindApmlDrivers();
+                            unbind_APML_drivers();
                         }
                         else {
-                            enableAPMLMuxChannel();
+                            bind_APML_drivers();
                             onHostPwrChange();
                             getCPUInformation();
                         }
@@ -109,8 +109,8 @@ struct PowerCap
         })
     {
         sd_journal_print(LOG_DEBUG, "PowerCap is created \n");
-        getPlatformID();
-        enableAPMLMuxChannel();
+        get_num_of_proc();
+        bind_APML_drivers();
         init_power_capping();     // init from BMC stored settings
     }
     ~PowerCap()
@@ -137,14 +137,11 @@ struct PowerCap
     bool do_power_capping();
     void onHostPwrChange();
     int  getGPIOValue(const std::string& name);
-    void enableAPMLMuxChannel();
-    int setAPMLMux(int cpu);
-    void unbindApmlDrivers();
-    void unbindDrivers(int cpu);
-    int bindDrivers(int cpu);
+    void bind_APML_drivers();
+    void unbind_APML_drivers();
 
     // oob-lib functions
-    bool  getPlatformID();
+    bool  get_num_of_proc();
     uint32_t set_oob_pwr_limit(uint8_t bus, uint32_t req_pwr_limit);
     void getCPUInformation();
     bool ConnectApml(uint8_t soc_num);
