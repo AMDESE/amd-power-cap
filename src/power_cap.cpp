@@ -21,31 +21,17 @@ extern "C" {
 #include "esmi_cpuid_msr.h"
 }
 
-#define COMMAND_BOARD_ID    ("/sbin/fw_printenv -n board_id")
+#define COMMAND_NUM_OF_CPU  ("/sbin/fw_printenv -n num_of_cpu")
 #define COMMAND_LEN         3
 #define SMU_INIT_WAIT       180
 #define MAX_RETRY           10
 #define CPU_MAX_PWR_LIMIT   (1000) //1000 watts, max perf
 
-// Definition for I2C APML
-// Use the foollowing define to enable APML Over I2C Bus
-//#define ENABLE_I2C_APML 1
-
 // Definition for I3C APML
 #define MAX_APML_BUS     2
 #define I3C_BUS_APML0    4
 #define I3C_BUS_APML1    5
-#define I3C_MUX_DEV      0x4cc00000000
-#define I3C_TSI_DEV      0x22400000001
-#define I3C_RMI_DEV      0x22400000002
-#define I3C_MUX_DATA_LEN 3
-#define IMX3112_MUX      0x70
-#define IMX3112_MR46     0x46
-#define IMX3112_MR40     0x40  // MUX port sel
-#define IMX3112_MR41     0x41  // MUX port RW enable
 #define CMD_BUFF_LEN     256
-#define FNAME_LEN        128
-#define I3C_WAIT_TIME    2     // 2 seconds
 
 // IOCTL command
 #define I3C_DEV_IOC_MAGIC 0x07
@@ -75,48 +61,6 @@ struct i3c_ioc_priv_xfer {
         __u8 pad[5];
 };
 
-
-#define I3C_PRIV_XFER_SIZE(N)   \
-        ((((sizeof(struct i3c_ioc_priv_xfer)) * (N)) < (1 << _IOC_SIZEBITS)) \
-        ? ((sizeof(struct i3c_ioc_priv_xfer)) * (N)) : 0)
-
-#define I3C_IOC_PRIV_XFER(N)    \
-        _IOC(_IOC_READ|_IOC_WRITE, I3C_DEV_IOC_MAGIC, 30, I3C_PRIV_XFER_SIZE(N))
-
-// Platform Type
-constexpr auto ONYX_SLT     = 61;   //0x3D
-constexpr auto ONYX_1       = 64;   //0x40
-constexpr auto ONYX_2       = 65;   //0x41
-constexpr auto ONYX_3       = 66;   //0x42
-constexpr auto ONYX_FR4     = 82;   //0x52
-constexpr auto QUARTZ_DAP   = 62;   //0x3E
-constexpr auto QUARTZ_1     = 67;   //0x43
-constexpr auto QUARTZ_2     = 68;   //0x44
-constexpr auto QUARTZ_3     = 69;   //0x45
-constexpr auto QUARTZ_FR4   = 81;   //0x51
-constexpr auto RUBY_1       = 70;   //0x46
-constexpr auto RUBY_2       = 71;   //0x47
-constexpr auto RUBY_3       = 72;   //0x48
-constexpr auto TITANITE_1   = 73;   //0x49
-constexpr auto TITANITE_2   = 74;   //0x4A
-constexpr auto TITANITE_3   = 75;   //0x4B
-constexpr auto TITANITE_4   = 76;   //0x4C
-constexpr auto TITANITE_5   = 77;   //0x4D
-constexpr auto TITANITE_6   = 78;   //0x4E
-
-//SP6 PLATFORMS
-constexpr auto SHALE_1      = 98;   //0x62
-constexpr auto SHALE_2      = 101;  //0x65
-constexpr auto SHALE_3      = 89;   //0x59
-constexpr auto CINNABAR     = 99;   //0x63
-constexpr auto SUNSTONE_1   = 97;   //0x61
-constexpr auto SUNSTONE_2   = 100;  //0x64
-
-constexpr auto I3C_DRIVER_PATH = "/sys/bus/platform/drivers/dw-i3c-master/";
-constexpr auto TSI_DRIVER_PATH = "/sys/bus/i3c/drivers/sbtsi_i3c/";
-constexpr auto RMI_DRIVER_PATH = "/sys/bus/i3c/drivers/sbrmi_i3c/";
-constexpr auto I3C_DEV0        = "1e7a6000.i3c4";
-constexpr auto I3C_DEV1        = "1e7a7000.i3c5";
 const     int  I3C_BUS[2] = {I3C_BUS_APML0 , I3C_BUS_APML1};
 
 const std::string PwrOkName = "MON_POST_COMPLETE";
@@ -291,52 +235,26 @@ bool PowerCap::do_power_capping() {
     return set_powercap;
 }
 
-bool PowerCap::getPlatformID()
+bool PowerCap::get_num_of_proc()
 {
     FILE *pf;
     char data[COMMAND_LEN];
     std::stringstream ss;
 
+    num_of_proc = 1;
     // Setup pipe for reading and execute to get u-boot environment
     // variable board_id.
-    pf = popen(COMMAND_BOARD_ID,"r");
+    pf = popen(COMMAND_NUM_OF_CPU,"r");
 
     if(pf > 0)
     {   // no error
         if (fgets(data, COMMAND_LEN , pf) != NULL)
         {
             ss << std::hex << (std::string)data;
-            ss >> board_id;
+            ss >> num_of_proc;
         }
-        pclose(pf);
-        if ( board_id > 0 || board_id < 0xFF )
-        {
-            switch (board_id)
-            {
-                case ONYX_SLT:
-                case ONYX_1 ... ONYX_3:
-                case ONYX_FR4:
-                case RUBY_1 ... RUBY_3:
-                case SHALE_1:
-                case SHALE_2:
-                case SHALE_3:
-                case CINNABAR:
-                case SUNSTONE_1:
-                case SUNSTONE_2:
-                    num_of_proc = 1;
-                    break;
-                case QUARTZ_DAP:
-                case QUARTZ_1 ... QUARTZ_3:
-                case QUARTZ_FR4:
-                case TITANITE_1 ... TITANITE_6:
-                    num_of_proc = 2;
-                    break;
-                default:
-                    num_of_proc = 1;
-                    break;
-            }//switch
+            pclose(pf);
             return true;
-        }
     }
     else
     {
@@ -388,119 +306,22 @@ int system_check(char *cmd)
         sd_journal_print(LOG_ERR, "Failed to run system cmd: %s \n", cmd);
     return rc;
 }
-void PowerCap::unbindDrivers(int i)
+
+void PowerCap::unbind_APML_drivers()
 {
     char cmd[CMD_BUFF_LEN];
 
-    // Unbind sbtsi driver
-    sprintf(cmd, "echo %d-%llx > %sunbind", I3C_BUS[i], I3C_TSI_DEV, TSI_DRIVER_PATH );
+    // Unbind sbtsi dnd sbrmi drivers
+    sprintf(cmd, "/usr/bin/set-apml.sh unbind");
     system_check(cmd);
-    // Unbind sbrmi driver
-    sprintf(cmd, "echo %d-%llx > %sunbind", I3C_BUS[i], I3C_RMI_DEV, RMI_DRIVER_PATH );
-    system_check(cmd);
-
-    // Unbind platform driver
-    if (i == 0)
-        sprintf(cmd, "echo %s > %sunbind", I3C_DEV0, I3C_DRIVER_PATH );
-    else
-        sprintf(cmd, "echo %s > %sunbind", I3C_DEV1, I3C_DRIVER_PATH );
-    system_check(cmd);
-    sleep(I3C_WAIT_TIME);
-}
-void PowerCap::unbindApmlDrivers()
-{
-    char cmd[CMD_BUFF_LEN];
-
-    // Unbind sbtsi driver
-    sprintf(cmd, "echo %d-%llx > %sunbind", I3C_BUS[0], I3C_TSI_DEV, TSI_DRIVER_PATH );
-    system_check(cmd);
-    // Unbind sbrmi driver
-    sprintf(cmd, "echo %d-%llx > %sunbind", I3C_BUS[0], I3C_RMI_DEV, RMI_DRIVER_PATH );
-    system_check(cmd);
-    if (num_of_proc == 2) {
-        sprintf(cmd, "echo %d-%llx > %sunbind", I3C_BUS[1], I3C_TSI_DEV, TSI_DRIVER_PATH );
-        system_check(cmd);
-        sprintf(cmd, "echo %d-%llx > %sunbind", I3C_BUS[1], I3C_RMI_DEV, RMI_DRIVER_PATH );
-        system_check(cmd);
-    }
-}
-int PowerCap::bindDrivers(int i)
-{
-    char cmd[CMD_BUFF_LEN];
-    int rc;
-
-    // Bind platform driver
-    if (i == 0)
-        sprintf(cmd, "echo %s > %sbind", I3C_DEV0, I3C_DRIVER_PATH );
-    else
-        sprintf(cmd, "echo %s > %sbind", I3C_DEV1, I3C_DRIVER_PATH );
-    rc = system_check(cmd);
-    sleep(I3C_WAIT_TIME);
-    return rc;
-}
-void i3cTransfer(int fd, int len, uint8_t *data )
-{
-    struct i3c_ioc_priv_xfer *xfers;
-    int nxfers = 1;
-
-    // write byte requires one transfer, allocate memory
-    xfers = (struct i3c_ioc_priv_xfer *)calloc(nxfers, sizeof(*xfers));
-    if (!xfers) {
-        sd_journal_print(LOG_ERR, "Error: alloc for transfer\n");
-	return;
-    }
-    // update the priv_xfer structure
-    xfers[0].rnw = 0;
-    xfers[0].len = len;
-    xfers[0].data = (uintptr_t)data;
-
-    // ioctl call to priv xfer
-    if (ioctl(fd, I3C_IOC_PRIV_XFER(nxfers), xfers) < 0) {
-	sd_journal_print(LOG_ERR, "Error: transfer failed with err (%d)\n", errno);
-    }
-    //free allocated memory
-    free(xfers);
-}
-int PowerCap::setAPMLMux(int i)
-{
-#ifdef ENABLE_I2C_APML
-    system("/usr/bin/set-apml.sh");
-#else
-    int fd;
-    char i3c_path[FNAME_LEN];
-    uint8_t data[I3C_MUX_DATA_LEN];
-
-    // open I3C Mux Device
-    snprintf(i3c_path, FNAME_LEN, "/dev/i3c-%d-%llx",I3C_BUS[i], I3C_MUX_DEV);
-
-    fd = open(i3c_path, O_RDWR);
-    if (fd < 0) {
-        sd_journal_print(LOG_ERR, "Error Opening device %s \n", i3c_path);
-        return fd;
-    }
-
-    // Set the Mux
-    data[1] = 0x00;
-    data[0] = IMX3112_MR46;
-    data[2] = 0x01;
-    i3cTransfer(fd, I3C_MUX_DATA_LEN, data);
-    data[0] = IMX3112_MR40;
-    data[2] = 0x40;
-    i3cTransfer(fd, I3C_MUX_DATA_LEN, data);
-    data[0] = IMX3112_MR41;
-    data[2] = 0x40;
-    i3cTransfer(fd, I3C_MUX_DATA_LEN, data);
-
-    close(fd);
-#endif  // ENABLE_I2C_APML
-    return 0;
 }
 
-void PowerCap::enableAPMLMuxChannel()
+void PowerCap::bind_APML_drivers()
 {
     int retry = 0;
     int bind_rc = 0;
     bool enableAPMLMux = false;
+    char cmd[CMD_BUFF_LEN];
 
     while (retry < MAX_RETRY)
     {
@@ -516,33 +337,15 @@ void PowerCap::enableAPMLMuxChannel()
     }
     if (enableAPMLMux == true)
     {
-#ifdef ENABLE_I2C_APML
-        bind_rc = setAPMLMux(0);
-#else
-        for (int i=0; i < num_of_proc; i++ )
+        sprintf(cmd, "/usr/bin/set-apml.sh bind");
+        if (system_check(cmd) >= 0)
         {
-	    // Unbind drivers
-            unbindDrivers(i);
-            // Bind drivers
-            bindDrivers(i);
-            // Set Mux device
-            setAPMLMux(i);
-            // Unbind drivers
-            unbindDrivers(i);
-            // Bind drivers
-            bind_rc = bindDrivers(i);
-        } // for loop
-#endif  // ENABLE_I2C_APML
-
-        // Touch a file to indicate i3c mux and APML slaves
-        // are configured.
-        if (bind_rc >= 0)
-        {
+            // Touch a file to indicate APML slaves are configured
             std::ofstream initdone (APML_INIT_DONE_FILE);
             initdone.close();
         }
-
     }
+
     sd_journal_print(LOG_INFO, "APML MUX setting sucessful for %d CPU \n", num_of_proc);
 }
 
