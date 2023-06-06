@@ -1,5 +1,32 @@
 #include "power_cap.hpp"
 
+#define CMD_BUFF_LEN    (256)
+
+void apml_unbind()
+{
+    int rc;
+    // Unbind sbtsi and sbrmi drivers
+    char cmd[CMD_BUFF_LEN];
+
+    sprintf(cmd, "/usr/bin/set-apml.sh unbind");
+    rc = system(cmd);
+    if (rc < 0)
+        sd_journal_print(LOG_ERR, "Failed to run system cmd: %s \n", cmd);
+}
+
+int apml_bind()
+{
+    int rc;
+    // bind sbtsi and sbrmi drivers
+    char cmd[CMD_BUFF_LEN];
+
+    sprintf(cmd, "/usr/bin/set-apml.sh bind");
+    rc = system(cmd);
+    if (rc < 0)
+        sd_journal_print(LOG_ERR, "Failed to run system cmd: %s \n", cmd);
+    return rc;
+}
+
 int main()
 {
     PowerCapDataHolder* powercapDataHolderObj =
@@ -28,6 +55,8 @@ int main()
     intfName = DBUS_INTF_NAME;
     bus.request_name(intfName.c_str());
 
+    // Unbind sbtsi and sbrmi drivers
+    apml_unbind();
     PowerCap powerCap{bus, DBUS_OBJECT_NAME, eventP};
 
     try
