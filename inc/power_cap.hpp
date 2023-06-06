@@ -13,6 +13,9 @@ const static constexpr char *PowerCapName =
 const static constexpr char *PowerCapEnableName =
     "PowerCapEnable";
 
+void apml_unbind();
+int apml_bind();
+
 class PowerCapDataHolder
 {
     static PowerCapDataHolder *instance;
@@ -101,6 +104,7 @@ struct PowerCap
                         }
                         else {
                             bind_APML_drivers();
+                            init_power_capping();
                             onHostPwrChange();
                         }
                     }
@@ -109,8 +113,6 @@ struct PowerCap
     {
         sd_journal_print(LOG_DEBUG, "PowerCap is created \n");
         get_num_of_proc();
-        bind_APML_drivers();
-        init_power_capping();     // init from BMC stored settings
     }
     ~PowerCap()
     {

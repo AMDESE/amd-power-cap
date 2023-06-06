@@ -235,11 +235,8 @@ int system_check(char *cmd)
 
 void PowerCap::unbind_APML_drivers()
 {
-    char cmd[CMD_BUFF_LEN];
 
-    // Unbind sbtsi dnd sbrmi drivers
-    sprintf(cmd, "/usr/bin/set-apml.sh unbind");
-    system_check(cmd);
+    apml_unbind();
 }
 
 void PowerCap::bind_APML_drivers()
@@ -247,7 +244,6 @@ void PowerCap::bind_APML_drivers()
     int retry = 0;
     int bind_rc = 0;
     bool enableAPMLMux = false;
-    char cmd[CMD_BUFF_LEN];
 
     while (retry < MAX_RETRY)
     {
@@ -263,8 +259,7 @@ void PowerCap::bind_APML_drivers()
     }
     if (enableAPMLMux == true)
     {
-        sprintf(cmd, "/usr/bin/set-apml.sh bind");
-        if (system_check(cmd) >= 0)
+        if (apml_bind() >= 0)
         {
             // Touch a file to indicate APML slaves are configured
             std::ofstream initdone (APML_INIT_DONE_FILE);
