@@ -50,10 +50,6 @@ int main()
     event = nullptr;
 
     sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
-    sdbusplus::server::manager_t m{bus, DBUS_OBJECT_NAME};
-
-    intfName = DBUS_INTF_NAME;
-    bus.request_name(intfName.c_str());
 
     // Unbind sbtsi and sbrmi drivers
     apml_unbind();
