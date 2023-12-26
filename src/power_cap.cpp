@@ -304,7 +304,7 @@ void PowerCap::init_power_capping()
 
     status = get_power_cap_enabled_setting();
 
-    while((status == false) || (retry < MAX_RETRY))
+    while((status == false) && (retry < MAX_RETRY))
     {
         sleep(10); //retry in 10s interval till phosphor-settings service loads
         status = get_power_cap_enabled_setting();
