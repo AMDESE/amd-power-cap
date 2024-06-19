@@ -172,7 +172,7 @@ bool PowerCap::get_num_of_proc()
     // variable board_id.
     pf = popen(COMMAND_NUM_OF_CPU,"r");
 
-    if(pf > 0)
+    if(!pf)
     {   // no error
         if (fgets(data, COMMAND_LEN , pf) != NULL)
         {
