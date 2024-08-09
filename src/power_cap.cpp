@@ -138,11 +138,18 @@ bool PowerCap::do_power_capping() {
     // update d-bus property if CPU applied a different limit
     // Assume we have a 240W CPU part, but user requests 320W
     // CPU will report 240W since it is the max.
-    if ((ret > 0) && (ret != userPCapLimit)) {
-        // socket P0 set was successful
-        // We assume both sockets have same OPN
-        PowerCap::set_power_cap_limit(ret);
-        set_powercap = true;
+    if (ret > 0)
+    {
+        sd_journal_print(LOG_INFO, "AppliedPowerCapData %d\n",AppliedPowerCapData);
+        AppliedPowerCapData = userPCapLimit;
+
+        if(ret != userPCapLimit)
+        {
+            // socket P0 set was successful
+            // We assume both sockets have same OPN
+            PowerCap::set_power_cap_limit(ret);
+            set_powercap = true;
+        }
     }
 
     // P1 Power Cap Value Update
@@ -151,11 +158,17 @@ bool PowerCap::do_power_capping() {
         ret = PowerCap::set_oob_pwr_limit(p1_info, userPCapLimit);
         // TBD: check if 2P config supports different OPNs
         if (set_powercap == false) {
-            if ((ret > 0) && (ret != userPCapLimit)) {
-                PowerCap::set_power_cap_limit(ret);
-                set_powercap = true;
+            if (ret > 0)
+            {
+                AppliedPowerCapData = userPCapLimit;
+
+                if(ret != userPCapLimit)
+                {
+                    PowerCap::set_power_cap_limit(ret);
+                    set_powercap = true;
+                }
             }
-	}
+        }
     }
 
     return set_powercap;
