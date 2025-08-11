@@ -1,31 +1,17 @@
 #include "power_cap.hpp"
 
-#define CMD_BUFF_LEN (256)
+const char* dbus_object_name = "/xyz/openbmc_project/control/host0/power_cap";
+const char* dbus_intf_name = "org.freedesktop.DBus.Properties";
 
-void apml_unbind()
+struct EventDeleter
 {
-    int rc;
-    // Unbind sbtsi and sbrmi drivers
-    char cmd[CMD_BUFF_LEN];
+    void operator()(sd_event* event) const
+    {
+        event = sd_event_unref(event);
+    }
+};
 
-    sprintf(cmd, "/usr/bin/set-apml.sh unbind");
-    rc = system(cmd);
-    if (rc < 0)
-        sd_journal_print(LOG_ERR, "Failed to run system cmd: %s \n", cmd);
-}
-
-int apml_bind()
-{
-    int rc;
-    // bind sbtsi and sbrmi drivers
-    char cmd[CMD_BUFF_LEN];
-
-    sprintf(cmd, "/usr/bin/set-apml.sh bind");
-    rc = system(cmd);
-    if (rc < 0)
-        sd_journal_print(LOG_ERR, "Failed to run system cmd: %s \n", cmd);
-    return rc;
-}
+using EventPtr = std::unique_ptr<sd_event, EventDeleter>;
 
 int main()
 {
@@ -52,8 +38,7 @@ int main()
     sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
 
     // Unbind sbtsi and sbrmi drivers
-    apml_unbind();
-    PowerCap powerCap{bus, DBUS_OBJECT_NAME, eventP};
+    PowerCap powerCap{bus, dbus_object_name};
 
     try
     {
