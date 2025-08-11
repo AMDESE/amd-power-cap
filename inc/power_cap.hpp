@@ -2,19 +2,16 @@
 #include <unistd.h>
 
 #include <phosphor-logging/elog-errors.hpp>
-#include <xyz/openbmc_project/Collection/DeleteAll/server.hpp>
+
+#include <fstream>
+#include <iostream>
+// #include <xyz/openbmc_project/Collection/DeleteAll/server.hpp>
 #include <xyz/openbmc_project/Common/error.hpp>
 #include <xyz/openbmc_project/Control/Power/Cap/server.hpp>
 #include <xyz/openbmc_project/State/Host/server.hpp>
 
-#include <fstream>
-#include <iostream>
-
 const static constexpr char* PowerCapName = "PowerCap";
 const static constexpr char* PowerCapEnableName = "PowerCapEnable";
-
-void apml_unbind();
-int apml_bind();
 
 class PowerCapDataHolder
 {
@@ -36,15 +33,6 @@ class PowerCapDataHolder
         "/xyz/openbmc_project/state/host0";
 };
 
-struct EventDeleter
-{
-    void operator()(sd_event* event) const
-    {
-        event = sd_event_unref(event);
-    }
-};
-
-using EventPtr = std::unique_ptr<sd_event, EventDeleter>;
 namespace StateServer = sdbusplus::xyz::openbmc_project::State::server;
 
 struct PowerCap
@@ -52,14 +40,13 @@ struct PowerCap
     PowerCapDataHolder* powercapDataHolderObj =
         powercapDataHolderObj->getInstance();
 
-    PowerCap(sdbusplus::bus::bus& bus, const char* path, EventPtr& event) :
+    PowerCap(sdbusplus::bus::bus& bus, const char* path) :
         bus(bus),
         propertiesChangedPowerCapValue(
             bus,
             sdbusplus::bus::match::rules::type::signal() +
                 sdbusplus::bus::match::rules::member("PropertiesChanged") +
-                sdbusplus::bus::match::rules::path(
-                    "/xyz/openbmc_project/control/host0/power_cap") +
+                sdbusplus::bus::match::rules::path(path) +
                 sdbusplus::bus::match::rules::argN(
                     0, "xyz.openbmc_project.Control.Power.Cap") +
                 sdbusplus::bus::match::rules::interface(
@@ -97,14 +84,9 @@ struct PowerCap
                         StateServer::Host::HostState currentHostState =
                             StateServer::Host::convertHostStateFromString(
                                 std::get<std::string>(valPropMap->second));
-                        if (currentHostState ==
+                        if (currentHostState !=
                             StateServer::Host::HostState::Off)
                         {
-                            unbind_APML_drivers();
-                        }
-                        else
-                        {
-                            bind_APML_drivers();
                             init_power_capping();
                             onHostPwrChange();
                         }
@@ -135,11 +117,9 @@ struct PowerCap
     bool do_power_capping();
     void onHostPwrChange();
     int getGPIOValue(const std::string& name);
-    void bind_APML_drivers();
-    void unbind_APML_drivers();
 
     // oob-lib functions
-    bool get_num_of_proc();
+    void get_num_of_proc();
     uint32_t set_oob_pwr_limit(uint8_t bus, uint32_t req_pwr_limit);
     // d-bus functions
     template <typename T>

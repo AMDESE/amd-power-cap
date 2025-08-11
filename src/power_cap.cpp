@@ -1,12 +1,10 @@
 #include "power_cap.hpp"
 
-#include <linux/ioctl.h>
-#include <linux/types.h>
-
 #include <boost/asio.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/spawn.hpp>
 #include <gpiod.hpp>
+#include <nlohmann/json.hpp>
 #include <sdbusplus/asio/connection.hpp>
 #include <sdbusplus/asio/property.hpp>
 
@@ -30,33 +28,6 @@ extern "C"
 #define SMU_INIT_WAIT 180
 #define MAX_RETRY 10
 #define CPU_MAX_PWR_LIMIT (1000) // 1000 watts, max perf
-
-// Definition for I3C APML
-#define MAX_APML_BUS 2
-#define I3C_BUS_APML0 4
-#define I3C_BUS_APML1 5
-#define CMD_BUFF_LEN 256
-
-// IOCTL command
-#define I3C_DEV_IOC_MAGIC 0x07
-
-#define APML_INIT_DONE_FILE "/tmp/apml_init_complete"
-
-/**
- * struct i3c_ioc_priv_xfer - I3C SDR ioctl private transfer
- * @data: Holds pointer to userspace buffer with transmit data.
- * @len: Length of data buffer buffers, in bytes.
- * @rnw: encodes the transfer direction. true for a read, false for a write
- */
-struct i3c_ioc_priv_xfer
-{
-    __u64 data;
-    __u16 len;
-    __u8 rnw;
-    __u8 pad[5];
-};
-
-const int I3C_BUS[2] = {I3C_BUS_APML0, I3C_BUS_APML1};
 
 const std::string PwrOkName = "MON_POST_COMPLETE";
 constexpr auto POWER_SERVICE = "xyz.openbmc_project.Settings";
@@ -139,7 +110,7 @@ bool PowerCap::do_power_capping()
     bool set_powercap = false;
 
     /* Do nothing, if new limit is same as old */
-    if (AppliedPowerCapData == userPCapLimit)
+    if (AppliedPowerCapData == static_cast<int>(userPCapLimit))
         return true;
 
     // P0 Power Cap Value Update
@@ -149,11 +120,11 @@ bool PowerCap::do_power_capping()
     // CPU will report 240W since it is the max.
     if (ret > 0)
     {
-        sd_journal_print(LOG_INFO, "AppliedPowerCapData %d\n",
+        sd_journal_print(LOG_DEBUG, "AppliedPowerCapData %d\n",
                          AppliedPowerCapData);
         AppliedPowerCapData = userPCapLimit;
 
-        if (ret != userPCapLimit)
+        if (ret != static_cast<int>(userPCapLimit))
         {
             // socket P0 set was successful
             // We assume both sockets have same OPN
@@ -173,7 +144,7 @@ bool PowerCap::do_power_capping()
             {
                 AppliedPowerCapData = userPCapLimit;
 
-                if (ret != userPCapLimit)
+                if (ret != static_cast<int>(userPCapLimit))
                 {
                     PowerCap::set_power_cap_limit(ret);
                     set_powercap = true;
@@ -185,33 +156,28 @@ bool PowerCap::do_power_capping()
     return set_powercap;
 }
 
-bool PowerCap::get_num_of_proc()
+void PowerCap::get_num_of_proc()
 {
-    FILE* pf;
-    char data[COMMAND_LEN];
-    std::stringstream ss;
+    std::ifstream file("/var/lib/platform-config/platform.json");
 
-    num_of_proc = 1;
-    // Setup pipe for reading and execute to get u-boot environment
-    // variable board_id.
-    pf = popen(COMMAND_NUM_OF_CPU, "r");
+    if (!file.is_open())
+    {
+        num_of_proc = 1;
+        return;
+    }
 
-    if (pf > 0)
-    { // no error
-        if (fgets(data, COMMAND_LEN, pf) != NULL)
-        {
-            ss << std::hex << (std::string)data;
-            ss >> num_of_proc;
-        }
-        pclose(pf);
-        return true;
+    nlohmann::json jsonData = nlohmann::json::parse(file);
+
+    if (jsonData.contains("CpuCount"))
+    {
+        num_of_proc = jsonData["CpuCount"];
     }
     else
     {
-        sd_journal_print(LOG_ERR, "Failed to open command stream \n");
+        throw std::runtime_error("Unable to read the CPU count");
     }
 
-    return false;
+    file.close();
 }
 
 int PowerCap::getGPIOValue(const std::string& name)
@@ -228,7 +194,8 @@ int PowerCap::getGPIOValue(const std::string& name)
     }
     try
     {
-        gpioLine.request({__FUNCTION__, gpiod::line_request::DIRECTION_INPUT});
+        gpioLine.request(
+            {__FUNCTION__, gpiod::line_request::DIRECTION_INPUT, 0});
     }
     catch (std::system_error& exc)
     {
@@ -257,43 +224,6 @@ int system_check(char* cmd)
     if (rc < 0)
         sd_journal_print(LOG_ERR, "Failed to run system cmd: %s \n", cmd);
     return rc;
-}
-
-void PowerCap::unbind_APML_drivers()
-{
-    apml_unbind();
-}
-
-void PowerCap::bind_APML_drivers()
-{
-    int retry = 0;
-    int bind_rc = 0;
-    bool enableAPMLMux = false;
-
-    while (retry < MAX_RETRY)
-    {
-        sleep(10);
-        if (getGPIOValue(PwrOkName) > 0)
-        {
-            sd_journal_print(LOG_INFO,
-                             "POST Complete reached - Enable APML Mux \n");
-            enableAPMLMux = true;
-            break;
-        }
-        retry++;
-    }
-    if (enableAPMLMux == true)
-    {
-        if (apml_bind() >= 0)
-        {
-            // Touch a file to indicate APML slaves are configured
-            std::ofstream initdone(APML_INIT_DONE_FILE);
-            initdone.close();
-        }
-    }
-
-    sd_journal_print(LOG_INFO, "APML MUX setting sucessful for %d CPU \n",
-                     num_of_proc);
 }
 
 // CPU loses the power limit applied after reboot
@@ -398,6 +328,7 @@ T PowerCap::getProperty(sdbusplus::bus::bus& bus, const char* service,
     catch (const sdbusplus::exception::SdBusError& ex)
     {
         sd_journal_print(LOG_ERR, "GetProperty call failed \n");
+        return T{};
     }
 }
 
