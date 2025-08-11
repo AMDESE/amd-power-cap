@@ -1,6 +1,6 @@
 #include "power_cap.hpp"
 
-#define CMD_BUFF_LEN    (256)
+#define CMD_BUFF_LEN (256)
 
 void apml_unbind()
 {
