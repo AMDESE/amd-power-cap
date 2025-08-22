@@ -30,7 +30,6 @@ extra_libs = [
   '-lstdc++fs',
   '-lphosphor_dbus',
   '-lapml64',
-  '-li2c',
   '-lpthread',
   '-lm'
 ]

@@ -17,8 +17,6 @@ extern "C"
 #include "apml.h"
 #include "esmi_mailbox.h"
 #include "esmi_rmi.h"
-#include "i2c/smbus.h"
-#include "linux/i2c-dev.h"
 
 #include <unistd.h>
 }
