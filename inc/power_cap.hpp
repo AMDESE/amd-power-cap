@@ -3,8 +3,14 @@
 
 #include <phosphor-logging/elog-errors.hpp>
 
+#include <cstdint>
 #include <fstream>
 #include <iostream>
+#include <map>
+#include <string>
+#include <type_traits>
+#include <variant>
+#include <vector>
 // #include <xyz/openbmc_project/Collection/DeleteAll/server.hpp>
 #include <xyz/openbmc_project/Common/error.hpp>
 #include <xyz/openbmc_project/Control/Power/Cap/server.hpp>
@@ -12,6 +18,13 @@
 
 const static constexpr char* PowerCapName = "PowerCap";
 const static constexpr char* PowerCapEnableName = "PowerCapEnable";
+
+// HPAR (hardware partitioning) mode, read from
+// xyz.openbmc_project.Settings :: /xyz/openbmc_project/control/HostMode
+//   CurrentMode == 0 -> 2P    (single OS spanning both sockets, host0)
+//   CurrentMode == 1 -> 2x1P  (two independent CPUs, host1 + host2)
+constexpr int HPAR_MODE_2P = 0;
+constexpr int HPAR_MODE_2X1P = 1;
 
 class PowerCapDataHolder
 {
@@ -29,8 +42,20 @@ class PowerCapDataHolder
 
     const static constexpr char* PropertiesIntf =
         "org.freedesktop.DBus.Properties";
-    const static constexpr char* HostStatePathPrefix =
-        "/xyz/openbmc_project/state/host0";
+
+    // Build the power_cap settings object path for a given host instance.
+    static std::string powerCapObjPath(int hostInstance)
+    {
+        return "/xyz/openbmc_project/control/host" +
+               std::to_string(hostInstance) + "/power_cap";
+    }
+
+    // Build the host state object path for a given host instance.
+    static std::string hostStateObjPath(int hostInstance)
+    {
+        return "/xyz/openbmc_project/state/host" +
+               std::to_string(hostInstance);
+    }
 };
 
 namespace StateServer = sdbusplus::xyz::openbmc_project::State::server;
@@ -40,13 +65,19 @@ struct PowerCap
     PowerCapDataHolder* powercapDataHolderObj =
         powercapDataHolderObj->getInstance();
 
-    PowerCap(sdbusplus::bus::bus& bus, const char* path) :
-        bus(bus),
+    // hostInstance selects which partition this daemon instance services:
+    //   0 -> host0  (2P mode, drives all present sockets)
+    //   1 -> host1  (2x1P mode, drives socket 0 / P0)
+    //   2 -> host2  (2x1P mode, drives socket 1 / P1)
+    PowerCap(sdbusplus::bus::bus& bus, int hostInstance) :
+        bus(bus), hostInstance(hostInstance),
+        powerCapPath(PowerCapDataHolder::powerCapObjPath(hostInstance)),
+        hostStatePath(PowerCapDataHolder::hostStateObjPath(hostInstance)),
         propertiesChangedPowerCapValue(
             bus,
             sdbusplus::bus::match::rules::type::signal() +
                 sdbusplus::bus::match::rules::member("PropertiesChanged") +
-                sdbusplus::bus::match::rules::path(path) +
+                sdbusplus::bus::match::rules::path(powerCapPath) +
                 sdbusplus::bus::match::rules::argN(
                     0, "xyz.openbmc_project.Control.Power.Cap") +
                 sdbusplus::bus::match::rules::interface(
@@ -68,8 +99,7 @@ struct PowerCap
             bus,
             sdbusplus::bus::match::rules::type::signal() +
                 sdbusplus::bus::match::rules::member("PropertiesChanged") +
-                sdbusplus::bus::match::rules::path(
-                    powercapDataHolderObj->HostStatePathPrefix) +
+                sdbusplus::bus::match::rules::path(hostStatePath) +
                 sdbusplus::bus::match::rules::interface(
                     powercapDataHolderObj->PropertiesIntf),
             [this](sdbusplus::message::message& msg) {
@@ -94,16 +124,22 @@ struct PowerCap
                 }
             })
     {
-        sd_journal_print(LOG_DEBUG, "PowerCap is created \n");
+        sd_journal_print(LOG_DEBUG, "PowerCap is created for host%d \n",
+                         hostInstance);
         get_num_of_proc();
+        build_socket_list();
     }
     ~PowerCap() {}
 
   private:
     sdbusplus::bus::bus& bus;
+    int hostInstance;           // 0 (2P/host0), 1 (host1/P0), 2 (host2/P1)
+    std::string powerCapPath;   // settings object this instance owns
+    std::string hostStatePath;  // host state object this instance watches
+    int num_of_proc = 1;
+    std::vector<uint8_t> socketList; // APML soc_die_num(s) this instance drives
     sdbusplus::bus::match_t propertiesChangedPowerCapValue;
     sdbusplus::bus::match_t propertiesChangedSignalCurrentHostState;
-    int num_of_proc = 1;
     unsigned int board_id = 0;
     unsigned int userPCapLimit; // user requested limit
     int AppliedPowerCapData;    // actual limit accepted by CPU
@@ -117,6 +153,11 @@ struct PowerCap
     bool do_power_capping();
     void onHostPwrChange();
     int getGPIOValue(const std::string& name);
+
+    // HPAR / topology helpers
+    void build_socket_list();
+    int get_hpar_mode();
+    bool is_instance_applicable();
 
     // oob-lib functions
     void get_num_of_proc();

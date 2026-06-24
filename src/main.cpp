@@ -1,8 +1,5 @@
 #include "power_cap.hpp"
 
-const char* dbus_object_name = "/xyz/openbmc_project/control/host0/power_cap";
-const char* dbus_intf_name = "org.freedesktop.DBus.Properties";
-
 struct EventDeleter
 {
     void operator()(sd_event* event) const
@@ -13,7 +10,7 @@ struct EventDeleter
 
 using EventPtr = std::unique_ptr<sd_event, EventDeleter>;
 
-int main()
+int main(int argc, char** argv)
 {
     PowerCapDataHolder* powercapDataHolderObj =
         powercapDataHolderObj->getInstance();
@@ -21,8 +18,24 @@ int main()
     int ret = 0;
     std::string intfName;
 
+    // Host instance to service (systemd template %i). Defaults to host0,
+    // which preserves the legacy single-instance 2P behavior.
+    int hostInstance = 0;
+    if (argc > 1)
+    {
+        try
+        {
+            hostInstance = std::stoi(argv[1]);
+        }
+        catch (const std::exception& e)
+        {
+            hostInstance = 0;
+        }
+    }
+
     phosphor::logging::log<phosphor::logging::level::INFO>(
-        "Start power cap service...");
+        "Start power cap service...",
+        phosphor::logging::entry("HOST=%d", hostInstance));
 
     sd_event* event = nullptr;
     ret = sd_event_default(&event);
@@ -37,8 +50,7 @@ int main()
 
     sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
 
-    // Unbind sbtsi and sbrmi drivers
-    PowerCap powerCap{bus, dbus_object_name};
+    PowerCap powerCap{bus, hostInstance};
 
     try
     {

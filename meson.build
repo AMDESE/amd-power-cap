@@ -46,7 +46,7 @@ executable(
 
 systemd = dependency('systemd')
 
-# Install service file
-install_data('service_files/xyz.openbmc_project.Control.Host.Power_cap.service',
+# Install templated service file (one instance per host: @0, @1, @2)
+install_data('service_files/xyz.openbmc_project.Control.Host.Power_cap@.service',
   install_dir : systemd.get_pkgconfig_variable('systemdsystemunitdir'),
 )

@@ -1,0 +1,18 @@
+[Unit]
+Description=Power Capping for host%i
+After=xyz.openbmc_project.Settings.service
+After=multi-host-config.service
+# multi-host-config creates host<N>.conf only for the active partition(s):
+#   2P   -> host0.conf      (only @0 starts)
+#   2x1P -> host1/2.conf     (only @1 and @2 start)
+ConditionPathExists=/etc/amd/hosts.d/host%i.conf
+
+[Service]
+ExecStart=/usr/bin/power-capping %i
+Restart=always
+RestartSec=3
+SyslogIdentifier=power-capping%i
+Type=simple
+
+[Install]
+WantedBy=multi-user.target
