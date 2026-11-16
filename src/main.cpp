@@ -1,33 +1,16 @@
 #include "power_cap.hpp"
 
-#define CMD_BUFF_LEN    (256)
-
-void apml_unbind()
+struct EventDeleter
 {
-    int rc;
-    // Unbind sbtsi and sbrmi drivers
-    char cmd[CMD_BUFF_LEN];
+    void operator()(sd_event* event) const
+    {
+        event = sd_event_unref(event);
+    }
+};
 
-    sprintf(cmd, "/usr/bin/set-apml.sh unbind");
-    rc = system(cmd);
-    if (rc < 0)
-        sd_journal_print(LOG_ERR, "Failed to run system cmd: %s \n", cmd);
-}
+using EventPtr = std::unique_ptr<sd_event, EventDeleter>;
 
-int apml_bind()
-{
-    int rc;
-    // bind sbtsi and sbrmi drivers
-    char cmd[CMD_BUFF_LEN];
-
-    sprintf(cmd, "/usr/bin/set-apml.sh bind");
-    rc = system(cmd);
-    if (rc < 0)
-        sd_journal_print(LOG_ERR, "Failed to run system cmd: %s \n", cmd);
-    return rc;
-}
-
-int main()
+int main(int argc, char** argv)
 {
     PowerCapDataHolder* powercapDataHolderObj =
         powercapDataHolderObj->getInstance();
@@ -35,8 +18,24 @@ int main()
     int ret = 0;
     std::string intfName;
 
+    // Host instance to service (systemd template %i). Defaults to host0,
+    // which preserves the legacy single-instance 2P behavior.
+    int hostInstance = 0;
+    if (argc > 1)
+    {
+        try
+        {
+            hostInstance = std::stoi(argv[1]);
+        }
+        catch (const std::exception& e)
+        {
+            hostInstance = 0;
+        }
+    }
+
     phosphor::logging::log<phosphor::logging::level::INFO>(
-        "Start power cap service...");
+        "Start power cap service...",
+        phosphor::logging::entry("HOST=%d", hostInstance));
 
     sd_event* event = nullptr;
     ret = sd_event_default(&event);
@@ -51,9 +50,7 @@ int main()
 
     sdbusplus::bus::bus bus = sdbusplus::bus::new_default();
 
-    // Unbind sbtsi and sbrmi drivers
-    apml_unbind();
-    PowerCap powerCap{bus, DBUS_OBJECT_NAME, eventP};
+    PowerCap powerCap{bus, hostInstance};
 
     try
     {

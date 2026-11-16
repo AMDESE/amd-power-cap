@@ -1,60 +1,34 @@
 #include "power_cap.hpp"
 
-#include "iomanip"
 #include <boost/asio.hpp>
-#include <boost/asio/spawn.hpp>
 #include <boost/asio/error.hpp>
+#include <boost/asio/spawn.hpp>
+#include <gpiod.hpp>
+#include <nlohmann/json.hpp>
 #include <sdbusplus/asio/connection.hpp>
 #include <sdbusplus/asio/property.hpp>
-#include <gpiod.hpp>
-#include <filesystem>
-#include <linux/types.h>
-#include <linux/ioctl.h>
 
-extern "C" {
-#include <unistd.h>
-#include "linux/i2c-dev.h"
-#include "i2c/smbus.h"
+#include <filesystem>
+
+#include "iomanip"
+
+extern "C"
+{
 #include "apml.h"
 #include "esmi_mailbox.h"
 #include "esmi_rmi.h"
+
+#include <unistd.h>
 }
 
-#define COMMAND_NUM_OF_CPU  ("/sbin/fw_printenv -n num_of_cpu")
-#define COMMAND_LEN         3
-#define SMU_INIT_WAIT       180
-#define MAX_RETRY           10
-#define CPU_MAX_PWR_LIMIT   (1000) //1000 watts, max perf
-
-// Definition for I3C APML
-#define MAX_APML_BUS     2
-#define I3C_BUS_APML0    4
-#define I3C_BUS_APML1    5
-#define CMD_BUFF_LEN     256
-
-// IOCTL command
-#define I3C_DEV_IOC_MAGIC 0x07
-
-#define APML_INIT_DONE_FILE	"/tmp/apml_init_complete"
-
-/**
- * struct i3c_ioc_priv_xfer - I3C SDR ioctl private transfer
- * @data: Holds pointer to userspace buffer with transmit data.
- * @len: Length of data buffer buffers, in bytes.
- * @rnw: encodes the transfer direction. true for a read, false for a write
- */
-struct i3c_ioc_priv_xfer {
-        __u64 data;
-        __u16 len;
-        __u8 rnw;
-        __u8 pad[5];
-};
-
-const     int  I3C_BUS[2] = {I3C_BUS_APML0 , I3C_BUS_APML1};
+#define COMMAND_NUM_OF_CPU ("/sbin/fw_printenv -n num_of_cpu")
+#define COMMAND_LEN 3
+#define SMU_INIT_WAIT 180
+#define MAX_RETRY 10
+#define CPU_MAX_PWR_LIMIT (1000) // 1000 watts, max perf
 
 const std::string PwrOkName = "MON_POST_COMPLETE";
 constexpr auto POWER_SERVICE = "xyz.openbmc_project.Settings";
-std::string POWER_PATH ="/xyz/openbmc_project/control/host0/power_cap";
 constexpr auto POWER_INTERFACE = "xyz.openbmc_project.Control.Power.Cap";
 constexpr auto POWER_CAP_STR = "PowerCap";
 constexpr auto POWER_CAP_ENABLE_STR = "PowerCapEnable";
@@ -62,21 +36,28 @@ constexpr auto MAPPER_BUSNAME = "xyz.openbmc_project.ObjectMapper";
 constexpr auto MAPPER_PATH = "/xyz/openbmc_project/object_mapper";
 constexpr auto MAPPER_INTERFACE = "xyz.openbmc_project.ObjectMapper";
 
+// HostMode (HPAR) settings object
+constexpr auto HOSTMODE_PATH = "/xyz/openbmc_project/control/HostMode";
+constexpr auto HOSTMODE_INTERFACE = "xyz.openbmc_project.Control.HostMode";
+constexpr auto HOSTMODE_CURRENT_STR = "CurrentMode";
+
+// APML soc_die_num values (see apml_library: bits[3:0]=socket, bits[7:4]=die)
+constexpr uint8_t P0_SOC_DIE_NUM = 0; // Socket 0, Die 0
+constexpr uint8_t P1_SOC_DIE_NUM = 1; // Socket 1, Die 0
+
 PowerCapDataHolder* PowerCapDataHolder::instance = 0;
 
-uint8_t p0_info = 0;
-uint8_t p1_info = 1;
-
 // Set power limit to CPU using OOB library
-uint32_t PowerCap::set_oob_pwr_limit (uint8_t bus, uint32_t req_pwr_limit)
+uint32_t PowerCap::set_oob_pwr_limit(uint8_t bus, uint32_t req_pwr_limit)
 {
     oob_status_t ret;
     uint32_t current_pwr_limit;
 
     ret = read_socket_power_limit(bus, &current_pwr_limit);
-    if((ret == OOB_SUCCESS) && (current_pwr_limit != 0))
+    if ((ret == OOB_SUCCESS) && (current_pwr_limit != 0))
     {
-        sd_journal_print(LOG_DEBUG, "Initial Power Cap Value %d \n",current_pwr_limit);
+        sd_journal_print(LOG_DEBUG, "Initial Power Cap Value %d \n",
+                         current_pwr_limit);
     }
     else
     {
@@ -86,9 +67,10 @@ uint32_t PowerCap::set_oob_pwr_limit (uint8_t bus, uint32_t req_pwr_limit)
 
     /* CPU is already running at requested limit
      * OOB deals in milliwatts only */
-    if ((current_pwr_limit/1000) == req_pwr_limit)
+    if ((current_pwr_limit / 1000) == req_pwr_limit)
     {
-        sd_journal_print(LOG_DEBUG, "CPU already operating at requested power limit \n");
+        sd_journal_print(LOG_DEBUG,
+                         "CPU already operating at requested power limit \n");
         return req_pwr_limit;
     }
 
@@ -101,18 +83,19 @@ uint32_t PowerCap::set_oob_pwr_limit (uint8_t bus, uint32_t req_pwr_limit)
     }
     else
     {
-        sd_journal_print(LOG_INFO,"Power Limit Set Successfully\n");
+        sd_journal_print(LOG_INFO, "Power Limit Set Successfully\n");
     }
 
     // Readback and confirm the max limit accepted by CPU
     // if CPU doesnt support user limit, it returns its default power limit
     ret = read_socket_power_limit(bus, &current_pwr_limit);
-    if((ret == OOB_SUCCESS) && (current_pwr_limit != 0))
+    if ((ret == OOB_SUCCESS) && (current_pwr_limit != 0))
     {
         phosphor::logging::log<phosphor::logging::level::INFO>(
-            "Updated Power Cap Value ",phosphor::logging::entry(
-            "Updated Power Cap Value %d",current_pwr_limit));
-        return (current_pwr_limit/1000);
+            "Updated Power Cap Value ",
+            phosphor::logging::entry("Updated Power Cap Value %d",
+                                     current_pwr_limit));
+        return (current_pwr_limit / 1000);
     }
     else
     {
@@ -123,87 +106,190 @@ uint32_t PowerCap::set_oob_pwr_limit (uint8_t bus, uint32_t req_pwr_limit)
     return -1;
 }
 
-// read stored settings, user requested limit and apply power cap
-bool PowerCap::do_power_capping() {
+// Determine which APML socket(s) this daemon instance is responsible for.
+//   host0 (2P)   -> socket 0, and socket 1 too when a 2nd CPU is present
+//   host1 (2x1P) -> socket 0 (P0)
+//   host2 (2x1P) -> socket 1 (P1)
+void PowerCap::build_socket_list()
+{
+    socketList.clear();
 
-    int ret = -1;
-    bool set_powercap = false;
-
-    /* Do nothing, if new limit is same as old */
-    if (AppliedPowerCapData == userPCapLimit)
-        return true;
-
-    //P0 Power Cap Value Update
-    ret = PowerCap::set_oob_pwr_limit(p0_info, userPCapLimit);
-    // update d-bus property if CPU applied a different limit
-    // Assume we have a 240W CPU part, but user requests 320W
-    // CPU will report 240W since it is the max.
-    if (ret > 0)
+    switch (hostInstance)
     {
-        sd_journal_print(LOG_INFO, "AppliedPowerCapData %d\n",AppliedPowerCapData);
-        AppliedPowerCapData = userPCapLimit;
+        case 1: // 2x1P, host1 == P0
+            socketList.push_back(P0_SOC_DIE_NUM);
+            break;
+        case 2: // 2x1P, host2 == P1
+            socketList.push_back(P1_SOC_DIE_NUM);
+            break;
+        case 0: // 2P, single OS spanning all present sockets
+        default:
+            socketList.push_back(P0_SOC_DIE_NUM);
+            if (num_of_proc == 2)
+            {
+                socketList.push_back(P1_SOC_DIE_NUM);
+            }
+            break;
+    }
+}
 
-        if(ret != userPCapLimit)
-        {
-            // socket P0 set was successful
-            // We assume both sockets have same OPN
-            PowerCap::set_power_cap_limit(ret);
-            set_powercap = true;
-        }
+// Read current HPAR mode from HostMode settings.
+// Returns HPAR_MODE_2P (0) on any error / when HostMode is unavailable, so
+// single-socket and legacy 2P platforms keep their default behavior.
+int PowerCap::get_hpar_mode()
+{
+    try
+    {
+        std::string settingManager =
+            getService(bus, HOSTMODE_PATH, HOSTMODE_INTERFACE);
+        if (settingManager.empty())
+            return HPAR_MODE_2P;
+
+        auto method =
+            bus.new_method_call(settingManager.c_str(), HOSTMODE_PATH,
+                                "org.freedesktop.DBus.Properties", "Get");
+        method.append(HOSTMODE_INTERFACE, HOSTMODE_CURRENT_STR);
+
+        // CurrentMode representation may vary; accept the common encodings.
+        std::variant<std::string, bool, uint8_t, uint16_t, uint32_t, uint64_t,
+                     int16_t, int32_t, int64_t>
+            value{};
+        auto reply = bus.call(method);
+        reply.read(value);
+
+        return std::visit(
+            [](auto&& val) -> int {
+                using T = std::decay_t<decltype(val)>;
+                if constexpr (std::is_same_v<T, std::string>)
+                {
+                    try
+                    {
+                        return std::stoi(val);
+                    }
+                    catch (...)
+                    {
+                        return HPAR_MODE_2P;
+                    }
+                }
+                else if constexpr (std::is_same_v<T, bool>)
+                {
+                    return val ? HPAR_MODE_2X1P : HPAR_MODE_2P;
+                }
+                else
+                {
+                    return static_cast<int>(val);
+                }
+            },
+            value);
+    }
+    catch (const std::exception& ex)
+    {
+        sd_journal_print(LOG_ERR, "Unable to read HostMode, assuming 2P \n");
+    }
+    return HPAR_MODE_2P;
+}
+
+// host0 instance services 2P mode only; host1/host2 service 2x1P mode only.
+// This prevents two instances from driving the same socket when all three
+// power_cap settings objects exist simultaneously.
+bool PowerCap::is_instance_applicable()
+{
+    int mode = get_hpar_mode();
+    if (hostInstance == 0)
+    {
+        return (mode == HPAR_MODE_2P);
+    }
+    return (mode == HPAR_MODE_2X1P);
+}
+
+// read stored settings, user requested limit and apply power cap
+bool PowerCap::do_power_capping()
+{
+    int ret = -1;
+    bool any_success = false;
+    bool writeback_done = false;
+
+    // Only act if this instance matches the running HPAR mode.
+    if (!is_instance_applicable())
+    {
+        sd_journal_print(LOG_DEBUG,
+                         "host%d not applicable for current HPAR mode \n",
+                         hostInstance);
+        return true;
     }
 
-    // P1 Power Cap Value Update
-    if (num_of_proc == 2)
-    {
-        ret = PowerCap::set_oob_pwr_limit(p1_info, userPCapLimit);
-        // TBD: check if 2P config supports different OPNs
-        if (set_powercap == false) {
-            if (ret > 0)
-            {
-                AppliedPowerCapData = userPCapLimit;
+    /* Do nothing, if new limit is same as old */
+    if (AppliedPowerCapData == static_cast<int>(userPCapLimit))
+        return true;
 
-                if(ret != userPCapLimit)
-                {
-                    PowerCap::set_power_cap_limit(ret);
-                    set_powercap = true;
-                }
+    // Apply the requested limit to every socket owned by this instance.
+    // In 2x1P each instance owns exactly one socket, giving each independent
+    // CPU its own power cap. In 2P (host0) the same value is applied to all
+    // present sockets.
+    for (uint8_t soc_die_num : socketList)
+    {
+        ret = PowerCap::set_oob_pwr_limit(soc_die_num, userPCapLimit);
+        if (ret > 0)
+        {
+            any_success = true;
+            // update d-bus property if CPU applied a different limit
+            // Assume we have a 240W CPU part, but user requests 320W
+            // CPU will report 240W since it is the max.
+            if ((ret != static_cast<int>(userPCapLimit)) && !writeback_done)
+            {
+                PowerCap::set_power_cap_limit(ret);
+                writeback_done = true;
             }
         }
     }
 
-    return set_powercap;
+    if (any_success)
+    {
+        sd_journal_print(LOG_DEBUG, "AppliedPowerCapData %d\n",
+                         AppliedPowerCapData);
+        AppliedPowerCapData = userPCapLimit;
+    }
+
+    return any_success;
 }
 
-bool PowerCap::get_num_of_proc()
+void PowerCap::get_num_of_proc()
 {
-    FILE *pf;
-    char data[COMMAND_LEN];
-    std::stringstream ss;
-
+    // Default to a single processor; only override on a clean read. This must
+    // never throw: platform.json can be missing, empty or partially written
+    // early in boot, and an uncaught exception here would abort the daemon.
     num_of_proc = 1;
-    // Setup pipe for reading and execute to get u-boot environment
-    // variable board_id.
-    pf = popen(COMMAND_NUM_OF_CPU,"r");
 
-    if(pf > 0)
-    {   // no error
-        if (fgets(data, COMMAND_LEN , pf) != NULL)
-        {
-            ss << std::hex << (std::string)data;
-            ss >> num_of_proc;
-        }
-            pclose(pf);
-            return true;
+    std::ifstream file("/var/lib/platform-config/platform.json");
+    if (!file.is_open())
+    {
+        sd_journal_print(LOG_INFO,
+                         "platform.json not present, assuming 1 CPU \n");
+        return;
+    }
+
+    // parse() with allow_exceptions=false returns a discarded value instead
+    // of throwing when the input is empty or malformed.
+    nlohmann::json jsonData = nlohmann::json::parse(file, nullptr, false);
+    if (jsonData.is_discarded())
+    {
+        sd_journal_print(LOG_INFO,
+                         "platform.json not ready, assuming 1 CPU \n");
+        return;
+    }
+
+    if (jsonData.contains("CpuCount"))
+    {
+        num_of_proc = jsonData["CpuCount"].get<int>();
     }
     else
     {
-        sd_journal_print(LOG_ERR, "Failed to open command stream \n");
+        sd_journal_print(LOG_ERR,
+                         "CpuCount missing in platform.json, assuming 1 \n");
     }
-
-    return false;
 }
 
-int  PowerCap::getGPIOValue(const std::string& name)
+int PowerCap::getGPIOValue(const std::string& name)
 {
     int value;
     gpiod::line gpioLine;
@@ -217,11 +303,13 @@ int  PowerCap::getGPIOValue(const std::string& name)
     }
     try
     {
-        gpioLine.request({__FUNCTION__, gpiod::line_request::DIRECTION_INPUT});
+        gpioLine.request(
+            {__FUNCTION__, gpiod::line_request::DIRECTION_INPUT, 0});
     }
     catch (std::system_error& exc)
     {
-        sd_journal_print(LOG_ERR, "Error setting gpio as Input: %s \n", name.c_str());
+        sd_journal_print(LOG_ERR, "Error setting gpio as Input: %s \n",
+                         name.c_str());
         return -1;
     }
 
@@ -231,56 +319,20 @@ int  PowerCap::getGPIOValue(const std::string& name)
     }
     catch (std::system_error& exc)
     {
-        sd_journal_print(LOG_ERR, "Error getting gpio value for: %s \n", name.c_str());
+        sd_journal_print(LOG_ERR, "Error getting gpio value for: %s \n",
+                         name.c_str());
         return -1;
     }
 
     return value;
 }
 
-int system_check(char *cmd)
+int system_check(char* cmd)
 {
     int rc = system(cmd);
     if (rc < 0)
         sd_journal_print(LOG_ERR, "Failed to run system cmd: %s \n", cmd);
     return rc;
-}
-
-void PowerCap::unbind_APML_drivers()
-{
-
-    apml_unbind();
-}
-
-void PowerCap::bind_APML_drivers()
-{
-    int retry = 0;
-    int bind_rc = 0;
-    bool enableAPMLMux = false;
-
-    while (retry < MAX_RETRY)
-    {
-
-        sleep(10);
-        if (getGPIOValue(PwrOkName) > 0)
-        {
-            sd_journal_print(LOG_INFO, "POST Complete reached - Enable APML Mux \n");
-            enableAPMLMux = true;
-            break;
-        }
-        retry++;
-    }
-    if (enableAPMLMux == true)
-    {
-        if (apml_bind() >= 0)
-        {
-            // Touch a file to indicate APML slaves are configured
-            std::ofstream initdone (APML_INIT_DONE_FILE);
-            initdone.close();
-        }
-    }
-
-    sd_journal_print(LOG_INFO, "APML MUX setting sucessful for %d CPU \n", num_of_proc);
 }
 
 // CPU loses the power limit applied after reboot
@@ -292,12 +344,12 @@ void PowerCap::onHostPwrChange()
 
     status = get_power_cap_enabled_setting();
 
-    if(status && PowerCapEnableData == true)
+    if (status && PowerCapEnableData == true)
     {
         get_power_cap_limit();
 
         // loop until SMU firmware initalizes
-        while((do_power_capping() == false) && (retry < MAX_RETRY))
+        while ((do_power_capping() == false) && (retry < MAX_RETRY))
         {
             sleep(30);
             sd_journal_print(LOG_INFO, "SMU not initialized, retrying...\n");
@@ -308,7 +360,6 @@ void PowerCap::onHostPwrChange()
     {
         sd_journal_print(LOG_ERR, "Power cap not enabled \n");
     }
-
 }
 void PowerCap::init_power_capping()
 {
@@ -317,14 +368,14 @@ void PowerCap::init_power_capping()
 
     status = get_power_cap_enabled_setting();
 
-    while((status == false) && (retry < MAX_RETRY))
+    while ((status == false) && (retry < MAX_RETRY))
     {
-        sleep(10); //retry in 10s interval till phosphor-settings service loads
+        sleep(10); // retry in 10s interval till phosphor-settings service loads
         status = get_power_cap_enabled_setting();
         retry++;
     }
 
-    if(status && (PowerCapEnableData == true))
+    if (status && (PowerCapEnableData == true))
     {
         PowerCap::get_power_cap_limit();
 
@@ -332,7 +383,7 @@ void PowerCap::init_power_capping()
         // power cap settings will be applied when host power state changes
         PowerCap::do_power_capping();
     }
-    else if(retry >= MAX_RETRY)
+    else if (retry >= MAX_RETRY)
     {
         sd_journal_print(LOG_ERR, "Power cap settings not found \n");
     }
@@ -340,23 +391,26 @@ void PowerCap::init_power_capping()
 
 void PowerCap::get_power_cap_limit()
 {
-    std::string settingManager = getService(bus, POWER_PATH.c_str() , POWER_INTERFACE);
+    std::string settingManager =
+        getService(bus, powerCapPath.c_str(), POWER_INTERFACE);
 
-    AppliedPowerCapData = getProperty<uint32_t>(bus, settingManager.c_str(),
-                                           POWER_PATH.c_str(),
-                                           POWER_INTERFACE, POWER_CAP_STR) ;
+    AppliedPowerCapData =
+        getProperty<uint32_t>(bus, settingManager.c_str(), powerCapPath.c_str(),
+                              POWER_INTERFACE, POWER_CAP_STR);
 }
 
 bool PowerCap::get_power_cap_enabled_setting()
 {
     try
     {
-        std::string settingManager = getService(bus, POWER_PATH.c_str() , POWER_INTERFACE);
+        std::string settingManager =
+            getService(bus, powerCapPath.c_str(), POWER_INTERFACE);
         if (settingManager.empty())
             return false;
 
-        PowerCapEnableData = getProperty<bool>(bus, settingManager.c_str(), POWER_PATH.c_str(),
-                                           POWER_INTERFACE, POWER_CAP_ENABLE_STR) ;
+        PowerCapEnableData = getProperty<bool>(
+            bus, settingManager.c_str(), powerCapPath.c_str(), POWER_INTERFACE,
+            POWER_CAP_ENABLE_STR);
     }
     catch (const sdbusplus::exception::SdBusError& ex)
     {
@@ -366,8 +420,9 @@ bool PowerCap::get_power_cap_enabled_setting()
 }
 
 template <typename T>
-T PowerCap::getProperty(sdbusplus::bus::bus& bus, const char* service, const char* path,
-              const char* interface, const char* propertyName)
+T PowerCap::getProperty(sdbusplus::bus::bus& bus, const char* service,
+                        const char* path, const char* interface,
+                        const char* propertyName)
 {
     auto method = bus.new_method_call(service, path,
                                       "org.freedesktop.DBus.Properties", "Get");
@@ -382,11 +437,12 @@ T PowerCap::getProperty(sdbusplus::bus::bus& bus, const char* service, const cha
     catch (const sdbusplus::exception::SdBusError& ex)
     {
         sd_journal_print(LOG_ERR, "GetProperty call failed \n");
+        return T{};
     }
 }
 
 std::string PowerCap::getService(sdbusplus::bus::bus& bus, const char* path,
-                       const char* interface)
+                                 const char* interface)
 {
     auto mapper = bus.new_method_call(MAPPER_BUSNAME, MAPPER_PATH,
                                       MAPPER_INTERFACE, "GetObject");
@@ -427,13 +483,12 @@ void PowerCap::set_power_cap_limit(uint32_t value)
         [this](boost::system::error_code ec) {
             if (ec)
             {
-                sd_journal_print(LOG_ERR, "Failed to set power cap value in dbus interface \n");
+                sd_journal_print(
+                    LOG_ERR,
+                    "Failed to set power cap value in dbus interface \n");
             }
         },
-        "xyz.openbmc_project.Settings",
-        "/xyz/openbmc_project/control/host0/power_cap",
-        "org.freedesktop.DBus.Properties", "Set",
-        "xyz.openbmc_project.Control.Power.Cap", "PowerCap",
-        std::variant<uint32_t>(value));
+        POWER_SERVICE, powerCapPath.c_str(), "org.freedesktop.DBus.Properties",
+        "Set", POWER_INTERFACE, POWER_CAP_STR, std::variant<uint32_t>(value));
     AppliedPowerCapData = value;
 }
